@@ -65,7 +65,7 @@ jobs:
           fi
         shell: bash
 
-      - name: Debug: Show image tags
+      - name: Show image tags
         run: echo "Publishing tags: ${{ steps.set-tags.outputs.image_tags }}"
       
       - name: Build and push Docker image
