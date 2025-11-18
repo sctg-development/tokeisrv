@@ -1,16 +1,16 @@
-name: Release
+name: Cross-platform Release
 
 on:
   push:
     tags:
-      - 'v*'
-  workflow_dispatch:
+      - 'v*.*.*'
 
 jobs:
   build:
     name: Build ${{ matrix.target }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -49,44 +49,47 @@ jobs:
         run: |
           rustup target add ${{ matrix.target }} || true
 
-      - name: Setup environment (musl)
+      - name: Setup environment for musl
         if: matrix.target == 'x86_64-unknown-linux-musl'
         run: |
           sudo apt-get update
-          sudo apt-get -y install musl-tools gcc-multilib
+          sudo apt-get -y install musl-tools pkg-config libssl-dev zip
 
       - name: Build
         env:
           CARGO_TERM_COLOR: always
         run: |
+          echo "Building target: ${{ matrix.target }}"
           # Use target-specific build command
           if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
             cargo build --release --target ${{ matrix.target }}
           elif [[ "${{ matrix.target }}" == "x86_64-pc-windows-msvc" ]]; then
-            # Windows (on windows-latest runner)
-            cargo build --release
+            # Windows (native on windows-latest)
+            cargo build --release --target ${{ matrix.target }}
           else
-            # macOS: build native release
+            # macOS builds (native on macOS runner)
             cargo build --release
           fi
+        shell: bash
 
-      - name: Prepare artifacts
+      - name: Prepare artifact
         run: |
           mkdir -p artifacts
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
             cp target/${{ matrix.target }}/release/tokei_rs artifacts/tokei_rs || true
             tar -czf artifacts/${{ matrix.artifact }} -C artifacts tokei_rs || true
           elif [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
-            cp target/release/tokei_rs.exe artifacts/tokei_rs.exe || true
+            cp target/${{ matrix.target }}/release/tokei_rs.exe artifacts/tokei_rs.exe || true
             (cd artifacts && zip -r ../${{ matrix.artifact }} tokei_rs.exe) || true
           else
-            # macOS builds (x86_64 & arm64) output at target/release/tokei_rs
+            # macOS builds
             cp target/release/tokei_rs artifacts/tokei_rs || true
             tar -czf artifacts/${{ matrix.artifact }} -C artifacts tokei_rs || true
           fi
         shell: bash
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -102,6 +105,9 @@ jobs:
         with:
           path: artifacts
 
+      - name: List artifacts
+        run: ls -la artifacts || true
+
       - name: Create GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v1
@@ -109,7 +115,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Release url
-        run: |
-          echo "Release created: ${{ steps.create_release.outputs.upload_url }}"
+  
