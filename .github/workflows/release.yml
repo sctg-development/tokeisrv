@@ -91,10 +91,21 @@ jobs:
           fi
         shell: bash
 
-      - name: List artifacts (build job)
+      - name: List artifacts (build job) - POSIX
+        if: runner.os != 'Windows'
         run: |
           echo "Listing artifacts after packaging"
           ls -laR artifacts || true
+          test -f artifacts/${{ matrix.artifact }} || (echo "Artifact missing: artifacts/${{ matrix.artifact }}" && exit 1)
+        shell: bash
+
+      - name: List artifacts (build job) - Windows
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Write-Host "Listing artifacts after packaging"
+          Get-ChildItem -Recurse -Force artifacts
+          if (-Not (Test-Path "artifacts/${{ matrix.artifact }}")) { Write-Error "Artifact missing: artifacts/${{ matrix.artifact }}" ; exit 1 }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
