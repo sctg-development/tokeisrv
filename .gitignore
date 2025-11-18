@@ -1,0 +1,43 @@
+# Ignore build artifacts created by Cargo
+/target/
+
+# Temporary backup files
+**/*~
+**/#*
+**/*.rs.bk
+
+# Generated files from Rust toolchains
+**/*.rmeta
+**/*.rlib
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-*
+*.swp
+
+# macOS Finder metadata
+.DS_Store
+
+# dotenv local environment files
+.env
+.env.*
+
+# Logs
+*.log
+
+# Optional: Cargo.lock is typically tracked for applications but ignored for libraries.
+# Uncomment to ignore Cargo.lock if this project is a library.
+# Cargo.lock
+
+# System files
+Thumbs.db
+
+# Ignore local debug artifacts
+/debug/
+
+# Ignore coverage files
+coverage/
+
+# Ignore flycheck output
+/target/flycheck0/

@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: tokei_rs-linux-x86_64.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: tokei_rs-windows-x86_64.zip
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: tokei_rs-macos-x86_64.tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: tokei_rs-macos-arm64.tar.gz
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Add rust target
+        run: |
+          rustup target add ${{ matrix.target }} || true
+
+      - name: Setup environment (musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install musl-tools gcc-multilib
+
+      - name: Build
+        env:
+          CARGO_TERM_COLOR: always
+        run: |
+          # Use target-specific build command
+          if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
+            cargo build --release --target ${{ matrix.target }}
+          elif [[ "${{ matrix.target }}" == "x86_64-pc-windows-msvc" ]]; then
+            # Windows (on windows-latest runner)
+            cargo build --release
+          else
+            # macOS: build native release
+            cargo build --release
+          fi
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+            cp target/${{ matrix.target }}/release/tokei_rs artifacts/tokei_rs || true
+            tar -czf artifacts/${{ matrix.artifact }} -C artifacts tokei_rs || true
+          elif [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
+            cp target/release/tokei_rs.exe artifacts/tokei_rs.exe || true
+            (cd artifacts && zip -r ../${{ matrix.artifact }} tokei_rs.exe) || true
+          else
+            # macOS builds (x86_64 & arm64) output at target/release/tokei_rs
+            cp target/release/tokei_rs artifacts/tokei_rs || true
+            tar -czf artifacts/${{ matrix.artifact }} -C artifacts tokei_rs || true
+          fi
+        shell: bash
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: artifacts/${{ matrix.artifact }}
+
+  release:
+    name: Create GitHub release with artifacts
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: artifacts/*
+
+      - name: Release url
+        run: |
+          echo "Release created: ${{ steps.create_release.outputs.upload_url }}"
