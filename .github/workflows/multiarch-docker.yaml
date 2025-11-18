@@ -1,0 +1,78 @@
+# MIT License (MIT)
+
+# Copyright (c) 2025 Ronan Le Meillat for SCTG Development
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+name: Publish amd64/arm64 to docker Hub
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+jobs:
+  push_to_registry:
+    name: Push Docker image to Docker Hub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v3.4.0
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2.1.0
+        with:
+          platforms: 'arm64'
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2.5.0
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2.1.0
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v4.4.0
+        with:
+          images: sctg/tokeisrv
+
+      - name: Compute image tags
+        id: set-tags
+        run: |
+          echo "Event: ${{ github.event_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "image_tags=sctg/tokeisrv:beta" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            # Use release tag name for image tag
+            echo "image_tags=sctg/tokeisrv:latest,sctg/tokeisrv:${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            # Fallback
+            echo "image_tags=sctg/tokeisrv:beta" >> $GITHUB_OUTPUT
+          fi
+        shell: bash
+
+      - name: Debug: Show image tags
+        run: echo "Publishing tags: ${{ steps.set-tags.outputs.image_tags }}"
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4.0.0
+        with:
+          context: .
+          platforms: linux/arm64, linux/amd64
+          push: true
+          tags: ${{ steps.set-tags.outputs.image_tags }}
+          labels: ${{ steps.meta.outputs.labels }}
