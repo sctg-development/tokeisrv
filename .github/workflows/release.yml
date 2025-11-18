@@ -74,25 +74,31 @@ jobs:
           fi
         shell: bash
 
-      - name: Prepare artifact
+      - name: Prepare artifact (POSIX)
+        if: ${{ runner.os != 'Windows' }}
         run: |
           mkdir -p artifacts
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
               cp target/${{ matrix.target }}/release/tokei_rs artifacts/tokei_rs
               tar -czf artifacts/${{ matrix.artifact }} -C artifacts tokei_rs
-          elif [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
-              cp target/${{ matrix.target }}/release/tokei_rs.exe artifacts/tokei_rs.exe
-              # Use PowerShell Compress-Archive to create zip reliably on windows-latest runner
-              powershell -Command "Compress-Archive -Path artifacts/tokei_rs.exe -DestinationPath artifacts/${{ matrix.artifact }} -Force"
           else
-            # macOS builds
+              # macOS or other POSIX builds
               cp target/release/tokei_rs artifacts/tokei_rs
               tar -czf artifacts/${{ matrix.artifact }} -C artifacts tokei_rs
           fi
         shell: bash
 
+      - name: Prepare artifact (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          New-Item -Path artifacts -ItemType Directory -Force | Out-Null
+          Copy-Item -Path "target\${{ matrix.target }}\release\tokei_rs.exe" -Destination "artifacts\tokei_rs.exe" -Force
+          Compress-Archive -Path "artifacts\tokei_rs.exe" -DestinationPath "artifacts\${{ matrix.artifact }}" -Force
+          if (-Not (Test-Path "artifacts\${{ matrix.artifact }}")) { Write-Error "Artifact missing after packaging: artifacts\${{ matrix.artifact }}" ; exit 1 }
+
       - name: List artifacts (build job) - POSIX
-        if: runner.os != 'Windows'
+        if: ${{ runner.os != 'Windows' }}
         run: |
           echo "Listing artifacts after packaging"
           ls -laR artifacts || true
@@ -100,7 +106,7 @@ jobs:
         shell: bash
 
       - name: List artifacts (build job) - Windows
-        if: runner.os == 'Windows'
+        if: ${{ runner.os == 'Windows' }}
         shell: powershell
         run: |
           Write-Host "Listing artifacts after packaging"
