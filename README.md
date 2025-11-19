@@ -120,7 +120,7 @@ Note: updating `cached` from 0.55 to 0.56 requires a Duration type for TTL — t
 
 ## Logging
 
-- Default: logs are verbose (RUST_LOG defaults to `debug` when not set)
+- Default: logs are verbose (RUST_LOG defaults to `info` when not set)
 - To reduce log output: pass `-q` / `--quiet` to the binary
 - You can still use `RUST_LOG` to control specific logging levels if `-q` is not used
 
