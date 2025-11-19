@@ -1,3 +1,5 @@
+![](https://tokeisrv.sctg.eu.org/b1/github/sctg-development/tokeisrv?type=rust&category=code)
+![](https://tokeisrv.sctg.eu.org/b1/github/sctg-development/tokeisrv?type=rust&category=comments)
 # tokeisrv — Tokei HTTP Badge Service
 
 A small HTTP service exposing Tokei statistics (lines of code, comments, blanks, etc.) as SVG badges. The service uses `tokei` to compute language statistics, `actix-web` to expose endpoints, and `rsbadges` to generate SVG badge images.
