@@ -115,6 +115,23 @@ jobs:
           choco install openssl.light -y || choco install openssl -y
           refreshenv
 
+      - name: Detect OpenSSL and set environment variables for cargo
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          Write-Host "Detecting installed OpenSSL and setting OPENSSL_DIR env"
+          $openssl = Get-Command openssl.exe -ErrorAction SilentlyContinue
+          if ($null -ne $openssl) {
+            $bin = Split-Path $openssl.Path -Parent
+            $root = Split-Path $bin -Parent
+            Write-Host "OpenSSL root: $root"
+            Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_DIR=$root"
+            Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_LIB_DIR=$root\lib"
+            Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_INCLUDE_DIR=$root\include"
+          } else {
+            Write-Host "OpenSSL executable not found; cargo may still succeed if OPENSSL_DIR is set manually"
+          }
+
       - name: Build
         env:
           CARGO_TERM_COLOR: always
