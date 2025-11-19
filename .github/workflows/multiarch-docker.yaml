@@ -35,7 +35,7 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2.1.0
         with:
-          platforms: 'arm64'
+          platforms: "arm64"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2.5.0
       - name: Log in to Docker Hub
@@ -43,7 +43,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v4.4.0
@@ -67,8 +67,8 @@ jobs:
 
       - name: Show image tags
         run: |
-           echo "Publishing tags: ${{ steps.set-tags.outputs.image_tags }}"
-      
+          echo "Publishing tags: ${{ steps.set-tags.outputs.image_tags }}"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v4.0.0
         with:
@@ -77,3 +77,5 @@ jobs:
           push: true
           tags: ${{ steps.set-tags.outputs.image_tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
