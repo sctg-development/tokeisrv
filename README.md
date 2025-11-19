@@ -4,6 +4,11 @@ A small HTTP service exposing Tokei statistics (lines of code, comments, blanks,
 
 This project is an adaptation of XAMPPRocky's tokei web badge server; modifications and maintenance are by Ronan Le Meillat (SCTG Development). Code is licensed under the MIT license — see source headers.
 
+TL;DR — Quick deployment
+------------------------
+Want to deploy your own instance quickly? See the short step-by-step guide: [Deploy your own service using Docker Compose](./deploy-your-own-service.md).
+It covers creating a free `.pp.ua` domain, configuring Cloudflare and Cloudflare Tunnel (cloudflared), generating credentials, running `docker compose`, and example badge usage.
+
 ---
 
 ## Features ✅
