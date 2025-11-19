@@ -63,7 +63,7 @@ cargo run --release --
 
 Notes:
 - CLI options take precedence over environment variables.
-- Default behavior: verbose logs (RUST_LOG defaults to `debug` when unset). Use `-q` or `--quiet` to silence logs.
+- Default behavior: verbose logs (RUST_LOG defaults to `info` when unset). Use `-q` or `--quiet` to silence logs.
 
 ---
 
