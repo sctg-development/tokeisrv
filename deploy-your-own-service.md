@@ -216,4 +216,4 @@ Markdown examples (insert into README or README-based dashboards):
 
 ## Wrapping up
 
-You now have a simple local deployment via Docker Compose to test `tokeisrv` and expose it on the internet via Cloudflare Tunnel. For production or robust deployment, consider using the Helm chart to manage Kubernetes deployments and monitor logs/upgrade lifecycle.
+You now have a simple local deployment via Docker Compose to test `tokeisrv` and expose it on the internet via Cloudflare Tunnel. For production or robust deployment, consider using the Helm chart to manage Kubernetes deployments on a Kubernetes cluster and monitor logs/upgrade lifecycle.
