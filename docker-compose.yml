@@ -8,7 +8,7 @@
 # - This runs both containers on a single Docker host and exposes the binding
 #   and port needed by cloudflared.
 # - You should create and store the Cloudflare tunnel credentials JSON in
-#   ./cloudflared/credentials.json and the local `config.yml` in ./cloudflared.
+#   ./cloudflared/credentials.json and the local `config.yaml` in ./cloudflared.
 # - For production, place credentials in a secret manager (Kubernetes Secret,
 #   Docker secret, etc.) instead of mounting plaintext files.
 #
@@ -60,14 +60,14 @@ services:
     # Match the Helm chart command and paths used by the generated template
     command: ["cloudflared", "tunnel", "--config", "/etc/cloudflared/config.yaml", "--origincert=/etc/cloudflared/cert.pem", "run"]
 
-    # Comments on the content of config.yml (example below):
+    # Comments on the content of config.yaml (example below):
     # The config should contain your `tunnel` ID, path to credentials file and
     # the ingress rules that map incoming hostnames to local services.
     # The snippet below is an anonymized example of the config.yml that you
-    # should place under ./cloudflared/config.yml:
+    # should place under ./cloudflared/config.yaml:
     #
     #   tunnel: <TUNNEL_ID>
-    #   credentials-file: /etc/cloudflared/creds/credentials.json
+    #   credentials-file: /etc/cloudflared/credentials.json
     #   ingress:
     #     - hostname: <YOUR_HOSTNAME>
     #       service: http://tokeisrv:8000
@@ -80,16 +80,16 @@ networks:
   tokeisrv-net:
     driver: bridge
 
-# Example file: ./cloudflared/config.yml
+# Example file: ./cloudflared/config.yaml
 #
 # Please create this file before launching docker compose. DO NOT commit the
 # credentials or tokens.
 #
 # --- Begin example content --->
 # tunnel: <TUNNEL_ID>
-# credentials-file: /etc/cloudflared/creds/credentials.json
+# credentials-file: /etc/cloudflared/credentials.json
 # ingress:
-#   - hostname: tokeisrv.example.com
+#   - hostname: tokeisrv.pp.ua
 #     service: http://tokeisrv:8000
 #   - service: http_status:404
 # --- End example content --->
@@ -97,8 +97,8 @@ networks:
 # Usage:
 #   1) Create directories and files:
 #        mkdir -p cloudflared
-#        # create credentials.json & config.yml using `cloudflared tunnel` commands
-#   2) Populate the `credentials.json` and `config.yml` as shown above.
+#        # create credentials.json & config.yaml using `cloudflared tunnel` commands
+#   2) Populate the `credentials.json` and `config.yaml` as shown above.
 #   3) Start the services:
 #        docker compose up -d
 #   4) See logs:
