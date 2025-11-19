@@ -67,6 +67,16 @@ jobs:
           profile: minimal
           override: true
 
+      - name: Cache cargo build artifacts (target)
+        uses: actions/cache@v4
+        with:
+          path: |
+            target
+          key: ${{ runner.os }}-cargo-target-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-target-
+
       - name: Add rust target
         run: |
           rustup target add ${{ matrix.target }} || true
