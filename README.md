@@ -13,6 +13,7 @@ This project is an adaptation of XAMPPRocky's tokei web badge server; modificati
 - Cache remote repository stats for faster responses (`cached` crate)
 - CLI args and environment variables for server configuration
 - Verbose logs by default, quiet mode via `-q`/`--quiet`
+ - Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
 
 ---
 
@@ -125,6 +126,45 @@ RUST_LOG=actix_web=info,target=debug cargo run --release --
 - The service clones remote repositories to a temporary directory — ensure you trust the sources you allow or limit access.
 - The `git` command must be available in the environment where the service runs.
 
+User whitelist (optional, recommended for security)
+-----------------------------------------------
+You can optionally restrict which repository owners the service is permitted to analyze. This prevents the server from cloning arbitrary repositories and reduces attack surface.
+
+How it works:
+- Provide a comma-separated list of allowed usernames (e.g., `alice,bob`). If the list is empty (default), all requests are permitted.
+- Whitelist can be set using the CLI flag `--user-whitelist` or the environment variable `TOKEI_USER_WHITELIST`.
+- When a request targets a repository whose owner is not listed, the server returns a red `forbidden` SVG badge (HTTP 403) instead of cloning the repo.
+
+Notes on formatting and behavior:
+- The whitelist expects a comma-separated list of usernames with no surrounding spaces (whitespace is trimmed). Empty entries are not allowed.
+- Username matching is exact and case-sensitive. If you want case-insensitive matching, normalize usernames to lowercase before passing them in.
+- The server logs a warning for requests blocked by the whitelist for monitoring/auditing purposes.
+
+Example usage
+-------------
+Using the CLI:
+```bash
+./tokei_rs --user-whitelist alice,bob --bind 0.0.0.0 --port 8000
+```
+
+Using environment variables:
+```bash
+export TOKEI_USER_WHITELIST="alice,bob"
+./tokei_rs
+```
+
+Using Docker (passing env to container):
+```bash
+docker run -e TOKEI_USER_WHITELIST="alice,bob" -p 8000:8000 sctg/tokeisrv:latest
+```
+
+Using Helm (chart value):
+```bash
+helm install tokeisrv helm/tokeisrv --set userWhitelist='alice,bob'
+```
+
+This feature should be used when you want to operate the service in a managed environment or expose it publicly — it helps ensure only repositories from trusted owners are processed.
+
 ---
 
 ## Contributing 👩‍💻👨‍💻
@@ -136,7 +176,3 @@ Please open issues or pull requests. If you're planning larger changes, create a
 ## License
 
 This software is provided under the MIT license. See comments in source files for details.
-
----
-
-If you want, I can add a short `Makefile` or an example `systemd` service file for deployment. Which would you like next?
