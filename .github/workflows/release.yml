@@ -232,6 +232,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' }}
           files: "artifacts/**/*"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
