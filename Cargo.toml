@@ -1,5 +1,5 @@
 [package]
-authors = ["Erin Power <xampprocky@gmail.com>"]
+authors = ["Erin Power <xampprocky@gmail.com>", "Ronan Le Meillat"]
 name = "tokei_rs"
 version = "0.3.0"
 edition = "2021"
