@@ -1,0 +1,112 @@
+# Docker Compose for running cloudflared tunnel + tokeisrv
+#
+# This file demonstrates how to run the tokeisrv web service alongside a
+# Cloudflare Tunnel (cloudflared). It is commented and provides an anonymized
+# example configuration based on the Helm values in sctg-tokeisrv.yaml.
+#
+# Notes:
+# - This runs both containers on a single Docker host and exposes the binding
+#   and port needed by cloudflared.
+# - You should create and store the Cloudflare tunnel credentials JSON in
+#   ./cloudflared/credentials.json and the local `config.yml` in ./cloudflared.
+# - For production, place credentials in a secret manager (Kubernetes Secret,
+#   Docker secret, etc.) instead of mounting plaintext files.
+#
+# Quick start (example):
+# 1) Create ./cloudflared/credentials.json using `cloudflared tunnel login` then
+#    `cloudflared tunnel create ...` and copy the credentials file here.
+# 2) Replace <TUNNEL_ID> and <YOUR_HOSTNAME> placeholders below or set them
+#    in the exported env vars (shown in the example).
+# 3) Run `docker compose up -d` and verify connectivity.
+
+services:
+  tokeisrv:
+    image: sctg/tokeisrv:beta
+    # use `:latest`, `:beta`, or a pinned tag in production
+    restart: unless-stopped
+    environment:
+      # Bind to 0.0.0.0 inside the container and default port
+      - TOKEI_BIND=0.0.0.0
+      - TOKEI_PORT=8000
+      # Optional CLI whitelist (comma separated) - if set, only these users are allowed
+      # Example: TOKEI_USER_WHITELIST=user1,user2
+      - TOKEI_USER_WHITELIST=
+    ports:
+      # Optional: expose locally for debugging; not required for cloudflared access
+      - "8000:8000"  # comment out in production if you only want cloudflared to expose it
+    networks:
+      - tokeisrv-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  cloudflared:
+    image: highcanfly/net-tools:1.3.1
+    restart: unless-stopped
+    depends_on:
+      - tokeisrv
+    networks:
+      - tokeisrv-net
+    # We mount credentials and a config file into the container. DO NOT commit
+    # credentials.json into your Git repository; keep it secure!
+    volumes:
+      # Mount a credentials secret (the JSON returned by `cloudflared tunnel create`)
+      - ./cloudflared/credentials.json:/etc/cloudflared/creds/credentials.json:ro
+      # Mount the config directory with the config file and the cert used by the helm chart
+      - ./cloudflared/config.yml:/etc/cloudflared/config/config.yaml:ro
+      - ./cloudflared/cert.pem:/etc/cloudflared/config/cert.pem:ro
+    # Match the Helm chart command and paths used by the generated template
+    command: ["cloudflared", "tunnel", "--config", "/etc/cloudflared/config/config.yaml", "--origincert=/etc/cloudflared/config/cert.pem", "run"]
+
+    # Comments on the content of config.yml (example below):
+    # The config should contain your `tunnel` ID, path to credentials file and
+    # the ingress rules that map incoming hostnames to local services.
+    # The snippet below is an anonymized example of the config.yml that you
+    # should place under ./cloudflared/config.yml:
+    #
+    #   tunnel: <TUNNEL_ID>
+    #   credentials-file: /etc/cloudflared/creds/credentials.json
+    #   ingress:
+    #     - hostname: <YOUR_HOSTNAME>
+    #       service: http://tokeisrv:8000
+    #     - service: http_status:404
+    #
+    # Replace <TUNNEL_ID> and <YOUR_HOSTNAME> with your real values.
+
+# A single shared network to let services talk to each other by name
+networks:
+  tokeisrv-net:
+    driver: bridge
+
+# Example file: ./cloudflared/config.yml
+#
+# Please create this file before launching docker compose. DO NOT commit the
+# credentials or tokens.
+#
+# --- Begin example content --->
+# tunnel: <TUNNEL_ID>
+# credentials-file: /etc/cloudflared/creds/credentials.json
+# ingress:
+#   - hostname: tokeisrv.example.com
+#     service: http://tokeisrv:8000
+#   - service: http_status:404
+# --- End example content --->
+
+# Usage:
+#   1) Create directories and files:
+#        mkdir -p cloudflared
+#        # create credentials.json & config.yml using `cloudflared tunnel` commands
+#   2) Populate the `credentials.json` and `config.yml` as shown above.
+#   3) Start the services:
+#        docker compose up -d
+#   4) See logs:
+#        docker compose logs -f cloudflared
+#        docker compose logs -f tokeisrv
+#
+# Security note:
+# - Do not store credentials.json in Git. Prefer a secure secret management
+#   approach (e.g., Docker secrets, Kubernetes Secrets, HashiCorp Vault, etc.)
+# - Use firewall rules and other protections when exposing the service to the
+#   public internet.
