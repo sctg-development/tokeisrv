@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 jobs:
   build:
@@ -76,6 +76,20 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get -y install musl-tools pkg-config libssl-dev zip
+
+      - name: Setup environment for Windows OpenSSL build
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          Write-Host "Installing StrawberryPerl & nasm for OpenSSL build"
+          choco install strawberryperl -y
+          choco install nasm -y
+          refreshenv
+          # Install Perl modules required by OpenSSL Configure script
+          cpan -i Locale::Maketext::Simple
+          cpan -i IPC::Cmd
+          cpan -i Params::Check
+          cpan -i Text::Template
 
       - name: Build
         env:
@@ -159,8 +173,6 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          files: 'artifacts/**/*'
+          files: "artifacts/**/*"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  
