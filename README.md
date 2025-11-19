@@ -125,7 +125,6 @@ RUST_LOG=actix_web=info,target=debug cargo run --release --
 ## Security & limitations ⚠️
 
 - The service clones remote repositories to a temporary directory — ensure you trust the sources you allow or limit access.
-- The `git` command must be available in the environment where the service runs.
 
 User whitelist (optional, recommended for security)
 -----------------------------------------------
