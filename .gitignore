@@ -41,3 +41,5 @@ coverage/
 
 # Ignore flycheck output
 /target/flycheck0/
+sctg-tokeisrv.yaml
+helm/tokeisrv/t.md

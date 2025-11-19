@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tokeisrv.fullname" . }}
+  labels:
+    {{- include "tokeisrv.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ include "tokeisrv.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "tokeisrv.name" . }}
+      annotations:
+        {{- toYaml .Values.podAnnotations | nindent 8 }}
+    spec:
+      serviceAccountName: {{ if .Values.serviceAccount.create }}{{ default (include "tokeisrv.name" .) .Values.serviceAccount.name }}{{ else }}{{ .Values.serviceAccount.name }}{{ end }}
+      nodeSelector: {{ toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations: {{ toYaml .Values.tolerations | nindent 8 }}
+      affinity: {{ toYaml .Values.affinity | nindent 8 }}
+      containers:
+        - name: {{ include "tokeisrv.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+              name: http
+          env:
+            - name: TOKEI_BIND
+              value: "0.0.0.0"
+            - name: TOKEI_PORT
+              value: "{{ .Values.service.port }}"
+          {{- if .Values.resources }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- end }}
+          {{- if .Values.livenessProbe.enabled }}
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+          {{- end }}
+          {{- if .Values.readinessProbe.enabled }}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+          {{- end }}

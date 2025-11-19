@@ -1,0 +1,107 @@
+# Default values for tokeisrv
+# Change these values when you install the chart
+
+replicaCount: 1
+
+image:
+  repository: sctg/tokeisrv
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+# Pod resource configuration
+resources: {}
+
+# Liveness/readiness probes - basic TCP probe to the port
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 3
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+
+# Optional cloudflared (tunnel) support
+#
+# NOTES - Creating a Cloudflare Tunnel - 3 ways
+# 1) Run cloudflared inside a Docker container (open an interactive shell)
+#    - Example (run locally):
+#        docker run -it --rm --name cloudflared highcanfly/net-tools:latest /bin/bash
+#    - Inside the container, use `cloudflared` to login and create a tunnel:
+#        cloudflared tunnel login
+#        # follow the authentication link and log in
+#        cloudflared tunnel create tokeisrv-tunnel
+#        # This will create a JSON credentials file in /root/.cloudflared/<UUID>.json
+#        cat /root/.cloudflared/<CREDS_FILE>.json
+#    - Copy the JSON contents into a Kubernetes Secret or use Helm's `--set-file` to pass it into `cloudflared.credentials`.
+#      For example:
+#        kubectl -n <namespace> create secret generic cloudflared-creds --from-file=creds.json=./credentials.json
+#      Or install via Helm with:
+#        helm install tokeisrv helm/tokeisrv --set-file cloudflared.credentials=./credentials.json --set cloudflared.TunnelID=<TUNNEL_ID>
+#
+# 2) Use `cloudflared` locally installed on your workstation
+#    - Install `cloudflared` via your OS package manager or Cloudflare's release.
+#    - Log in and create the tunnel from your workstation:
+#        cloudflared tunnel login
+#        cloudflared tunnel create tokeisrv-tunnel
+#    - Securely transfer the produced credentials JSON to a secret in the cluster or pass into Helm via `--set-file`.
+#
+# 3) Use the chart to create a pod and `exec` into it (sleep approach)
+#    - Edit values to keep the cloudflared pod alive so you can open a terminal into it:
+#        cloudflared:
+#          enabled: true
+#          command: ["/usr/bin/sleep"]
+#          args: ["infinity"]
+#    - Deploy the chart, find the created cloudflared pod and exec in:
+#        kubectl exec -it <pod-name> -- /bin/bash
+#      then run `cloudflared tunnel login` and `cloudflared tunnel create` from inside.
+#    - After obtaining the credentials, store them as a Kubernetes Secret and update the chart values to remove the `sleep` override and enable the real tunnel.
+#
+# SECURITY NOTES
+#  - Never commit the credentials JSON or private tokens to your git repository.
+#  - Prefer storing the credentials as a Kubernetes Secret and mounting the file into /etc/cloudflared/creds/credentials.json.
+#  - Always replace placeholder values with your real tunnel ID and credential content in a secure manner (secret or Helm --set-file).
+#
+cloudflared:
+  enabled: true
+  # If enabled, you can configure local tunnel values to expose the service
+  image:
+    tag: "1.3.1"
+  # Example config: set TunnelID, credentials, and ingress
+  #
+  # For testing, you can override the command/args to keep the container running
+  # command: ["/usr/bin/sleep"]
+  # args: ["infinity"]
+  TunnelID: ""
+  credentials: ""
+  config: |-
+    # Example ingress configuration adjusted by tokeisrv chart
+    tunnel: tokeisrv-tunnel
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    ingress:
+      - hostname: tokeisrv.example.com
+        service: http://tokeisrv-tokeisrv:8000
+      - service: http_status:404
+
+# Service account creation
+serviceAccount:
+  create: true
+  name: ""
+
+# Pod annotations & labels
+podAnnotations: {}
+podLabels: {}
+
+# Node scheduling helpers
+nodeSelector: {}
+
+# Tolerations, affinity
+tolerations: []
+affinity: {}

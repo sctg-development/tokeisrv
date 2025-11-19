@@ -1,0 +1,26 @@
+TokeiSRV chart
+
+Your application has been deployed. To expose it via Cloudflare Tunnel (cloudflared), enable the `cloudflared` values in the chart values:
+
+  cloudflared:
+    enabled: true
+    TunnelID: "<tunnel-id>"
+    credentials: |
+      { /* tunnel credentials content */ }
+    config: |-
+      tunnel: tokeisrv-tunnel
+      credentials-file: /etc/cloudflared/creds/credentials.json
+      ingress:
+        - hostname: tokeisrv.example.com
+          service: http://{{ include "tokeisrv.fullname" . }}:{{ .Values.service.port }}
+        - service: http_status:404
+
+You can set the hostname above to the hostname you want to serve, or use the existing cloudflared chart values described in its README.
+
+Example commands to install the chart:
+
+helm repo add highcanfly https://helm-repo.highcanfly.club
+helm dep update helm/tokeisrv
+helm install tokeisrv helm/tokeisrv --set image.tag=latest --set replicaCount=1
+
+If `cloudflared.enabled` is true, the cloudflared subchart will be installed and configured to expose the service.
