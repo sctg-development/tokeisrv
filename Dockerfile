@@ -21,7 +21,7 @@
 # THE SOFTWARE.
 
 FROM ubuntu:resolute AS builder
-RUN apt-get update && apt-get install -y build-essential curl git pkg-config libssl-dev libc-dev libstdc++-13-dev libgcc-13-dev \
+RUN apt-get update && apt-get install -y build-essential curl git pkg-config libssl-dev libc-dev libstdc++-15-dev libgcc-15-dev \
     zip git libcurl4-openssl-dev musl-dev musl-tools cmake libclang-dev g++
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y 
 RUN echo $(dpkg --print-architecture)
@@ -56,7 +56,7 @@ RUN cd /build && \
     cp target/$TARGET/release/tokei_rs /tokeisrv
 
 FROM ubuntu:resolute AS runtime 
-RUN apt-get update && apt-get install -y libssl ca-certificates git
+RUN apt-get update && apt-get install -y ca-certificates
 COPY --from=builder /tokeisrv /usr/local/bin/tokeisrv
 COPY docker-startup.sh /usr/local/bin/docker-startup.sh
 RUN chmod +x /usr/local/bin/docker-startup.sh
