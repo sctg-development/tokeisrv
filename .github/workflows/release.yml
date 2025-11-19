@@ -84,12 +84,36 @@ jobs:
           Write-Host "Installing StrawberryPerl & nasm for OpenSSL build"
           choco install strawberryperl -y
           choco install nasm -y
+          choco install openssl.light -y || choco install openssl -y
           refreshenv
           # Install Perl modules required by OpenSSL Configure script
           cpan -i Locale::Maketext::Simple
           cpan -i IPC::Cmd
           cpan -i Params::Check
           cpan -i Text::Template
+
+      - name: Patch Cargo.toml to disable vendored OpenSSL for Windows
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          Write-Host "Patching Cargo.toml to remove openssl vendored feature for windows"
+          $content = Get-Content Cargo.toml -Raw
+          $new = $content -replace 'openssl = \{ version = "0.10", features = \["vendored"\] \}', 'openssl = { version = "0.10" }'
+          if ($content -eq $new) {
+            Write-Host "No change to Cargo.toml; pattern not found"
+          } else {
+            $new | Set-Content Cargo.toml -Force
+            Write-Host "Cargo.toml patched"
+            Get-Content Cargo.toml | Select-String "openssl" | ForEach-Object { Write-Host $_ }
+          }
+
+      - name: Install OpenSSL runtime/devel on Windows
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          Write-Host "Installing OpenSSL via Chocolatey"
+          choco install openssl.light -y || choco install openssl -y
+          refreshenv
 
       - name: Build
         env:
