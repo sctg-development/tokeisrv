@@ -43,3 +43,7 @@ coverage/
 /target/flycheck0/
 sctg-tokeisrv.yaml
 helm/tokeisrv/t.md
+cert.pem
+config.yaml
+credentials.json
+cloudflared/

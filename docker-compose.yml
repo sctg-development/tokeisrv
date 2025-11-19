@@ -53,12 +53,12 @@ services:
     # credentials.json into your Git repository; keep it secure!
     volumes:
       # Mount a credentials secret (the JSON returned by `cloudflared tunnel create`)
-      - ./cloudflared/credentials.json:/etc/cloudflared/creds/credentials.json:ro
+      - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
       # Mount the config directory with the config file and the cert used by the helm chart
-      - ./cloudflared/config.yml:/etc/cloudflared/config/config.yaml:ro
-      - ./cloudflared/cert.pem:/etc/cloudflared/config/cert.pem:ro
+      - ./cloudflared/config.yaml:/etc/cloudflared/config.yaml:ro
+      - ./cloudflared/cert.pem:/etc/cloudflared/cert.pem:ro
     # Match the Helm chart command and paths used by the generated template
-    command: ["cloudflared", "tunnel", "--config", "/etc/cloudflared/config/config.yaml", "--origincert=/etc/cloudflared/config/cert.pem", "run"]
+    command: ["cloudflared", "tunnel", "--config", "/etc/cloudflared/config.yaml", "--origincert=/etc/cloudflared/cert.pem", "run"]
 
     # Comments on the content of config.yml (example below):
     # The config should contain your `tunnel` ID, path to credentials file and
