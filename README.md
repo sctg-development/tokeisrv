@@ -8,6 +8,11 @@ This project is an adaptation of XAMPPRocky's tokei web badge server; modificati
 
 TL;DR — Quick deployment
 ------------------------
+use MarkDown code like
+```text
+![](https://tokeisrv.example.com/b1/github/sctg-development/tokeisrv?type=rust&category=code)
+![](https://tokeisrv.example.com/b1/github/sctg-development/tokeisrv?type=rust&category=comments)
+```
 Want to deploy your own instance quickly? See the short step-by-step guide: [Deploy your own service using Docker Compose](./deploy-your-own-service.md).
 It covers creating a free `.pp.ua` domain, configuring Cloudflare and Cloudflare Tunnel (cloudflared), generating credentials, running `docker compose`, and example badge usage.
 
@@ -21,7 +26,7 @@ It covers creating a free `.pp.ua` domain, configuring Cloudflare and Cloudflare
 - CLI args and environment variables for server configuration
 - Verbose logs by default, quiet mode via `-q`/`--quiet`
 - Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
-- no git dependencies at runtime
+- No git dependencies at runtime
 
 ---
 
@@ -29,7 +34,6 @@ It covers creating a free `.pp.ua` domain, configuring Cloudflare and Cloudflare
 
 Prerequisites:
 - Rust toolchain (stable)
-- `git` available on PATH
 
 Build:
 
