@@ -56,7 +56,7 @@ RUN cd /build && \
     cp target/$TARGET/release/tokei_rs /tokeisrv
 
 FROM ubuntu:resolute AS runtime 
-RUN apt-get update && apt-get install -y libssl-dev ca-certificates
+RUN apt-get update && apt-get install -y libssl-dev ca-certificates git
 COPY --from=builder /tokeisrv /usr/local/bin/tokeisrv
 COPY docker-startup.sh /usr/local/bin/docker-startup.sh
 RUN chmod +x /usr/local/bin/docker-startup.sh
