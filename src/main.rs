@@ -22,7 +22,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use std::process::{Command, Output};
+use git2::{build::RepoBuilder, Cred, Direction, FetchOptions, RemoteCallbacks, Repository};
+use std::path::Path;
 
 use actix_web::{
     get,
@@ -123,10 +124,12 @@ async fn main() -> std::io::Result<()> {
     use log::LevelFilter;
 
     if args.quiet {
-        env_logger::Builder::from_env(Env::default()).filter_level(LevelFilter::Off).init();
+        env_logger::Builder::from_env(Env::default())
+            .filter_level(LevelFilter::Off)
+            .init();
     } else {
-        // Default to "debug" when RUST_LOG isn't set for verbose output.
-        let env = Env::default().filter_or("RUST_LOG", "debug");
+        // Default to "info" when RUST_LOG isn't set for verbose output.
+        let env = Env::default().filter_or("RUST_LOG", "info");
         env_logger::Builder::from_env(env).init();
     }
 
@@ -236,51 +239,84 @@ async fn create_badge(
 
     let url: &str = &format!("https://{}/{}/{}", domain, user, repo);
 
-    let ls_remote: Output = Command::new("git")
-        .args(["ls-remote", "--symref", url, "HEAD", "refs/heads/**"])
-        .output()?;
-
-    let ls_remote_output: String = String::from_utf8(ls_remote.stdout)
-        .ok()
-        .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
-    (!ls_remote_output.is_empty())
-        .then(|| ())
-        .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
-
-    let git_lines: Vec<&str> = ls_remote_output.split("\n").collect();
-    (git_lines.len() > 1)
-        .then(|| ())
-        .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
-
-    let mut iter = git_lines.iter();
-    let head_branch: &str = match iter.next() {
-        Some(&s) => {
-            let without_prefix: &str = match s.strip_prefix("ref: refs/heads/") {
-                Some(b) => b,
-                None => "",
-            };
-            let without_prefix_and_suffix: &str = match without_prefix.strip_suffix("\tHEAD") {
-                Some(c) => c,
-                None => "",
-            };
-            without_prefix_and_suffix
+    // Use libgit2 via git2 crate to query remote refs and determine branch
+    let tmp_bare_dir = TempDir::new()?;
+    let repo = match Repository::init_bare(tmp_bare_dir.path()) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(actix_web::error::ErrorBadRequest(
+                eyre::eyre!(e.to_string()),
+            ))
         }
-        None => "",
     };
-    iter.next(); // skip 2nd line with HEAD
-    let branch_name: &str = if branch.is_empty() {
-        head_branch
+    let mut remote = match repo.remote_anonymous(&url) {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(actix_web::error::ErrorBadRequest(
+                eyre::eyre!(e.to_string()),
+            ))
+        }
+    };
+    if let Err(e) = remote.connect(Direction::Fetch) {
+        return Err(actix_web::error::ErrorBadRequest(
+            eyre::eyre!(e.to_string()),
+        ));
+    }
+    let refs = match remote.list() {
+        Ok(r) => r,
+        Err(e) => {
+            return Err(actix_web::error::ErrorBadRequest(
+                eyre::eyre!(e.to_string()),
+            ))
+        }
+    };
+
+    // Build a vector of available branch names (refs/heads/*)
+    let available_branches: Vec<String> = refs
+        .iter()
+        .filter_map(|r| {
+            let name = r.name();
+            if name.starts_with("refs/heads/") {
+                Some(name[11..].to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+    if available_branches.is_empty() {
+        return Err(actix_web::error::ErrorBadRequest(eyre::eyre!(
+            "Invalid SHA provided."
+        )));
+    }
+
+    // Determine default head branch if not provided by query:
+    // prefer 'main' then 'master' then the first branch
+    let head_branch = if available_branches.contains(&"main".to_string()) {
+        "main".to_string()
+    } else if available_branches.contains(&"master".to_string()) {
+        "master".to_string()
+    } else {
+        available_branches[0].clone()
+    };
+
+    // If the request included a `branch` verify it's available
+    if !branch.is_empty() && !available_branches.contains(&branch) {
+        return Err(actix_web::error::ErrorBadRequest(eyre::eyre!(
+            "Invalid SHA provided."
+        )));
+    }
+
+    let branch_name = if branch.is_empty() {
+        head_branch.as_str()
     } else {
         &branch
     };
-    let mut sha: &str = "";
-    while let Some(&line) = iter.next() {
-        let (s, bn) = match line.split_once("\trefs/heads/") {
-            Some((s, bn)) => (s, bn),
-            None => ("", ""),
-        };
-        if bn == branch_name {
-            sha = s;
+    // Find the oid for the requested branch
+    let mut sha: String = String::new();
+    let target_ref = format!("refs/heads/{}", branch_name);
+    for r in refs.iter() {
+        if r.name() == target_ref.as_str() {
+            sha = r.oid().to_string();
             break;
         }
     }
@@ -290,7 +326,7 @@ async fn create_badge(
 
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
         log::debug!("Checking If-None-Match: {}#{}", sha, branch_name);
-        let entity_tag: EntityTag = EntityTag::new(false, etag_identifier(sha, branch_name));
+        let entity_tag: EntityTag = EntityTag::new(false, etag_identifier(&sha, branch_name));
         let found_match: bool = match if_none_match {
             IfNoneMatch::Any => false,
             IfNoneMatch::Items(items) => items
@@ -302,7 +338,7 @@ async fn create_badge(
             CACHE
                 .lock()
                 .unwrap()
-                .cache_get(&repo_identifier(&url, sha, branch_name));
+                .cache_get(&repo_identifier(&url, &sha, branch_name));
             log::info!("{}#{}#{} Not Modified", url, sha, branch_name);
             return Ok(respond!(NotModified));
         }
@@ -347,7 +383,7 @@ async fn create_badge(
         stats += language.clone();
     }
 
-    log::info!(
+    log::debug!(
         "{url}#{sha}#{branch_name} - Languages (most common to least common) {languages:#?} Lines {lines} Code {code} Comments {comments} Blanks {blanks}",
         url = url,
         sha = sha,
@@ -357,6 +393,17 @@ async fn create_badge(
         code = stats.code,
         comments = stats.comments,
         blanks = stats.blanks
+    );
+
+    log::info!(
+        "{}#{}#{} - Lines: {} Code: {} Comments: {} Blanks: {}",
+        url,
+        sha,
+        branch_name,
+        stats.lines(),
+        stats.code,
+        stats.comments,
+        stats.blanks
     );
 
     let badge: String = make_badge(
@@ -376,7 +423,7 @@ async fn create_badge(
         Ok,
         content_type,
         badge,
-        etag_identifier(sha, branch_name)
+        etag_identifier(&sha, branch_name)
     ))
 }
 
@@ -405,17 +452,27 @@ fn get_statistics(
     let temp_dir: TempDir = TempDir::new()?;
     let temp_path: &str = temp_dir.path().to_str().unwrap();
 
-    Command::new("git")
-        .args([
-            "clone",
-            url,
-            temp_path,
-            "--depth",
-            "1",
-            "--branch",
-            branch_name,
-        ])
-        .output()?;
+    // Clone using libgit2 RepoBuilder with shallow depth and optional credentials
+    let mut fo = FetchOptions::new();
+    let mut callbacks = RemoteCallbacks::new();
+    // Use GITHUB_TOKEN if available for HTTPS auth (x-access-token)
+    if let Ok(token) = std::env::var("GITHUB_TOKEN") {
+        callbacks.credentials(move |_, _username_from_url, _| {
+            // Use username "x-access-token" as suggested by GitHub for personal access tokens
+            Cred::userpass_plaintext("x-access-token", &token)
+        });
+    }
+    fo.remote_callbacks(callbacks);
+    fo.depth(1);
+
+    let mut builder = RepoBuilder::new();
+    builder.fetch_options(fo);
+    if !branch_name.is_empty() {
+        builder.branch(branch_name);
+    }
+    builder
+        .clone(url, Path::new(temp_path))
+        .map_err(|e| eyre::eyre!(e.to_string()))?;
 
     let mut languages: Languages = Languages::new();
     log::info!("{} - Getting Statistics", url);
