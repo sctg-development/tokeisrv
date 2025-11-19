@@ -66,6 +66,16 @@ struct Args {
     /// logs regardless of `RUST_LOG` environment setting.
     #[arg(short, long, default_value_t = false)]
     quiet: bool,
+
+    /// Comma-separated list of allowed users; if provided, only repos owned by
+    /// these users can be cloned. Environment variable fallback: TOKEI_USER_WHITELIST.
+    #[arg(long)]
+    user_whitelist: Option<String>,
+}
+// App configuration passed to handlers
+#[derive(Clone)]
+struct AppConfig {
+    user_whitelist: Option<std::collections::HashSet<String>>,
 }
 use cached::{Cached, Return};
 use csscolorparser::parse;
@@ -133,8 +143,25 @@ async fn main() -> std::io::Result<()> {
         env_logger::Builder::from_env(env).init();
     }
 
-    HttpServer::new(|| {
+    let user_whitelist_value = args
+        .user_whitelist
+        .clone()
+        .or_else(|| std::env::var("TOKEI_USER_WHITELIST").ok());
+
+    let whitelist: Option<std::collections::HashSet<String>> = user_whitelist_value.map(|s| {
+        s.split(',')
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .collect::<std::collections::HashSet<String>>()
+    });
+
+    let app_config = web::Data::new(AppConfig {
+        user_whitelist: whitelist,
+    });
+
+    HttpServer::new(move || {
         App::new()
+            .app_data(app_config.clone())
             .wrap(actix_web::middleware::Logger::default())
             .service(redirect_index)
             .service(create_badge)
@@ -158,7 +185,7 @@ macro_rules! respond {
 
     ($status:ident, $body:expr) => {{
         HttpResponse::$status()
-            .set(CONTENT_TYPE_SVG.clone())
+            .insert_header((CONTENT_TYPE, CONTENT_TYPE_SVG.clone()))
             .body($body)
     }};
 
@@ -196,10 +223,21 @@ struct BadgeQuery {
 #[get("/b1/{domain}/{user}/{repo}")]
 async fn create_badge(
     request: HttpRequest,
+    data: web::Data<AppConfig>,
     path: web::Path<(String, String, String)>,
     web::Query(query): web::Query<BadgeQuery>,
 ) -> actix_web::Result<HttpResponse> {
     let (domain, user, repo) = path.into_inner();
+
+    // If a whitelist is configured, ensure the requested user is allowed.
+    if let Some(whitelist) = &data.user_whitelist {
+        if !whitelist.contains(&user) {
+            log::warn!("User {} not in whitelist, returning forbidden badge", user);
+            // Return a red 'forbidden' badge (SVG) instead of HTTP 403 error.
+            let badge = make_badge_style("", "forbidden", "#e05d44", "plastic", "").await?;
+            return Ok(respond!(Forbidden, badge));
+        }
+    }
     let category = query.category.unwrap_or_else(|| "lines".to_owned());
     let (label, no_label) = match query.label {
         Some(v) => (v, false),

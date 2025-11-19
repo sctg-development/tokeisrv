@@ -12,6 +12,10 @@ service:
   type: ClusterIP
   port: 8000
 
+# Optional whitelist of users (comma-separated) — if set, only repos owned by these users can be cloned.
+# Example: "alice,bob"
+userWhitelist: ""
+
 # Pod resource configuration
 resources: {}
 

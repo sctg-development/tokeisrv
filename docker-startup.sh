@@ -35,6 +35,7 @@ set -euo pipefail
 # Default values
 TOKEI_BIND="${TOKEI_BIND:-0.0.0.0}"
 TOKEI_PORT="${TOKEI_PORT:-8000}"
+TOKEI_USER_WHITELIST="${TOKEI_USER_WHITELIST:-}"
 
 BINARY="/usr/local/bin/tokeisrv"
 
@@ -59,9 +60,35 @@ fi
 echo "Starting tokeisrv"
 echo "  bind: $TOKEI_BIND"
 echo "  port: $TOKEI_PORT"
+if [ -n "$TOKEI_USER_WHITELIST" ]; then
+  echo "  user-whitelist: $TOKEI_USER_WHITELIST"
+fi
+
+# Validate TOKEI_USER_WHITELIST format (optional)
+if [ -n "$TOKEI_USER_WHITELIST" ]; then
+  # split by comma and validate each token
+  IFS=',' read -ra USERS <<< "$TOKEI_USER_WHITELIST"
+  for u in "${USERS[@]}"; do
+    u_trimmed=$(echo "$u" | xargs)
+    if [ -z "$u_trimmed" ]; then
+      echo "ERROR: TOKEI_USER_WHITELIST contains an empty user token" >&2
+      exit 1
+    fi
+    # allowed chars: alphanumeric, underscore, dash, dot
+    if ! [[ "$u_trimmed" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+      echo "ERROR: invalid user name in TOKEI_USER_WHITELIST: $u_trimmed" >&2
+      exit 1
+    fi
+  done
+fi
 
 # Start the server as a child process so we can forward signals
-"$BINARY" --bind "$TOKEI_BIND" --port "$TOKEI_PORT" "$@" &
+cmd=("$BINARY" --bind "$TOKEI_BIND" --port "$TOKEI_PORT")
+if [ -n "$TOKEI_USER_WHITELIST" ]; then
+  cmd+=(--user-whitelist "$TOKEI_USER_WHITELIST")
+fi
+cmd+=("$@")
+"${cmd[@]}" &
 child_pid=$!
 
 # Forward common termination signals to the child process for graceful shutdown

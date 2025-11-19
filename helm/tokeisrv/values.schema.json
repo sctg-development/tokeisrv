@@ -26,6 +26,10 @@
                 "type": {
                     "type": "string"
                 },
+                "userWhitelist": {
+                    "type": "string",
+                    "default": ""
+                },
                 "port": {
                     "type": "integer",
                     "default": 8000
