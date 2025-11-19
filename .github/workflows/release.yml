@@ -132,6 +132,24 @@ jobs:
             Write-Host "OpenSSL executable not found; cargo may still succeed if OPENSSL_DIR is set manually"
           }
 
+      - name: Install OpenSSL via vcpkg (MSVC linking)
+        if: matrix.target == 'x86_64-pc-windows-msvc'
+        shell: pwsh
+        run: |
+          Write-Host "Installing vcpkg and OpenSSL via vcpkg to provide MSVC libs"
+          Set-Location $Env:GITHUB_WORKSPACE
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          C:\vcpkg\vcpkg.exe install openssl:x64-windows
+          # Set environment variables for cargo linking
+          $vcpkg_root = 'C:\vcpkg'
+          $inst = Join-Path $vcpkg_root 'installed\x64-windows'
+          Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=$vcpkg_root"
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_DIR=$inst"
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_LIB_DIR=$inst\lib"
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_INCLUDE_DIR=$inst\include"
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_STATIC=1"
+
       - name: Build
         env:
           CARGO_TERM_COLOR: always
