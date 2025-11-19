@@ -13,7 +13,8 @@ This project is an adaptation of XAMPPRocky's tokei web badge server; modificati
 - Cache remote repository stats for faster responses (`cached` crate)
 - CLI args and environment variables for server configuration
 - Verbose logs by default, quiet mode via `-q`/`--quiet`
- - Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
+- Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
+- no git dependencies at runtime
 
 ---
 
