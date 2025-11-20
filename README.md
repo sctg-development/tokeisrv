@@ -22,7 +22,7 @@ It covers creating a free `.pp.ua` domain, configuring Cloudflare and Cloudflare
 
 - Serves SVG badges for repository language statistics (lines, code, files, comments, blanks)
 - Badge customization: color, style, label, logo, and language ranking
-- Cache remote repository stats for faster responses (`cached` crate)
+- Cache remote repository stats for faster responses (`cached` crate) with configurable TTL and size (`--cache-ttl`, `--cache-size`)
 - CLI args and environment variables for server configuration
 - Verbose logs by default, quiet mode via `-q`/`--quiet`
 - Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
@@ -51,6 +51,13 @@ Run with custom bind/port and quiet flag (CLI has precedence over env vars):
 
 ```bash
 cargo run --release -- --bind 127.0.0.1 --port 8080 -q
+
+# Adjust cache size
+To control the maximum number of cached entries, provide `--cache-size`. Default is 1000 entries.
+
+```bash
+cargo run --release -- --cache-size 2048
+```
 ```
 
 You can also use environment variables instead of CLI options:
@@ -107,10 +114,26 @@ Query parameters details:
 
 ## Caching behavior 🧠
 
-This service uses the `cached` crate to cache computation results. Default configuration:
+This service uses an in-memory LRU cache to store repository statistics for faster responses. Each cached entry stores:
 
-- Cache store: `TimedSizedCache` (size = 1000 entries)
-- Lifespan: 1 day (24 hours)
+- Timestamp when the stats were added to the cache
+- Full commit SHA (40 hex characters)
+- SHA256 hash of the requested URL (useful for deduplication)
+- JSON summary of top-level counts (Lines, Code, Comments, Blanks)
+- The full tokei `Language` vector used to render badges
+
+Default behavior:
+
+- Number of cached entries (TimedSizedCache size): 1000 entries (default)
+- TTL for cached entries: 1 day (24 hours) (default)
+- You can change the maximum number of cached entries with the CLI flag `--cache-size` or the environment variable `TOKEI_CACHE_SIZE`.
+- Cache TTL can be overridden with CLI flag `--cache-ttl` (seconds) or the environment variable `TOKEI_CACHE_TTL`. CLI takes precedence.
+- The cache follows an LRU (least recently used) policy when space is needed and evicts oldest entries first.
+
+Notes:
+
+- If the git SHA hasn't changed, the repository is not recloned and the badge is generated from the cached result.
+- If the cache is full, the least recently used entry is evicted to make room.
 
 Etag headers and `If-None-Match` are supported by the service; cached responses will return 304 Not Modified when appropriate.
 

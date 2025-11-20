@@ -3,7 +3,7 @@ name: tokeisrv
 description: Helm chart to deploy tokeisrv and optionally expose it via cloudflared
 type: application
 version: 0.2.2
-appVersion: "0.3.0"
+appVersion: "0.3.1"
 
 # Optional dependency to cloudflared chart (see hcf-coder Chart.yaml for reference)
 dependencies:

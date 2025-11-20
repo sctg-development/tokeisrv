@@ -35,6 +35,7 @@ use actix_web::{
     App, HttpRequest, HttpResponse, HttpServer,
 };
 use clap::Parser;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Command-line arguments for the `tokei_rs` HTTP server.
 ///
@@ -71,6 +72,14 @@ struct Args {
     /// these users can be cloned. Environment variable fallback: TOKEI_USER_WHITELIST.
     #[arg(long)]
     user_whitelist: Option<String>,
+    /// Cache TTL in seconds (equivalent to environment variable TOKEI_CACHE_TTL)
+    /// Default is 86400 (1 day).
+    #[arg(long, default_value_t = 86400u64)]
+    cache_ttl: u64,
+    /// Maximum number of entries for the `cached` crate TimedSizedCache (default 1000)
+    /// Equivalent environment variable: `TOKEI_CACHE_SIZE`.
+    #[arg(long, default_value_t = 1000usize)]
+    cache_size: usize,
 }
 // App configuration passed to handlers
 #[derive(Clone)]
@@ -100,6 +109,8 @@ const DAY_IN_SECONDS: u64 = 24 * 60 * 60;
 
 static CONTENT_TYPE_SVG: Lazy<ContentType> =
     Lazy::new(|| ContentType("image/svg+xml".parse().unwrap()));
+static CACHE_TTL_SECONDS: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(DAY_IN_SECONDS));
+static CACHE_MAX_ENTRIES: Lazy<AtomicUsize> = Lazy::new(|| AtomicUsize::new(1000));
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -122,6 +133,28 @@ async fn main() -> std::io::Result<()> {
         if let Ok(port_from_env) = std::env::var("TOKEI_PORT") {
             if let Ok(parsed) = port_from_env.parse::<u16>() {
                 args.port = parsed;
+            }
+        }
+    }
+
+    // Cache TTL: check environment variable TOKEI_CACHE_TTL when the CLI value is unchanged
+    if args.cache_ttl == 86400u64 {
+        if let Ok(ttl_from_env) = std::env::var("TOKEI_CACHE_TTL") {
+            if let Ok(parsed) = ttl_from_env.parse::<u64>() {
+                args.cache_ttl = parsed;
+            }
+        }
+    }
+
+    // Store cache TTL into the global static so the `cached` macro can pick it up
+    CACHE_TTL_SECONDS.store(args.cache_ttl, Ordering::Relaxed);
+    // Store cache max entries into the static atomic so the `cached` crate create expression can pick it up
+    CACHE_MAX_ENTRIES.store(args.cache_size, Ordering::Relaxed);
+    // Also read env var fallback for cache size `TOKEI_CACHE_SIZE` to mimic CLI -> ENV precedence as other CLI flags
+    if args.cache_size == 1000 {
+        if let Ok(env_max) = std::env::var("TOKEI_CACHE_SIZE") {
+            if let Ok(parsed) = env_max.parse::<usize>() {
+                CACHE_MAX_ENTRIES.store(parsed, Ordering::Relaxed);
             }
         }
     }
@@ -478,7 +511,7 @@ fn etag_identifier(sha: &str, branch_name: &str) -> String {
     result = true,
     with_cached_flag = true,
     ty = "cached::TimedSizedCache<String, cached::Return<Vec<(LanguageType,Language)>>>",
-    create = "{ cached::TimedSizedCache::with_size_and_lifespan(1000, std::time::Duration::from_secs(DAY_IN_SECONDS)) }",
+    create = r#"{ let ttl = CACHE_TTL_SECONDS.load(Ordering::Relaxed); let max = CACHE_MAX_ENTRIES.load(Ordering::Relaxed); cached::TimedSizedCache::with_size_and_lifespan(max, std::time::Duration::from_secs(ttl)) }"#,
     convert = r#"{ repo_identifier(url, _sha, branch_name) }"#
 )]
 fn get_statistics(
