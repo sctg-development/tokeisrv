@@ -34,6 +34,8 @@ spec:
               value: "{{ .Values.service.port }}"
             - name: TOKEI_USER_WHITELIST
               value: "{{ .Values.userWhitelist }}"
+            - name: TOKEI_GITSERVER_WHITELIST
+              value: "{{ .Values.gitServerWhitelist }}"
             - name: TOKEI_CACHE_TTL
               value: "{{ .Values.cacheTtl }}"
             - name: TOKEI_CACHE_SIZE

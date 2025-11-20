@@ -15,6 +15,8 @@ service:
 # Optional whitelist of users (comma-separated) — if set, only repos owned by these users can be cloned.
 # Example: "alice,bob"
 userWhitelist: ""
+# Optional whitelist of git servers (comma-separated). If set, only these domains can be analyzed.
+gitServerWhitelist: ""
 
 cacheTtl: 86400 # Cache TTL in seconds (default: 1 day)
 cacheSize: 1000 # Cache size (default: 1000 entries)

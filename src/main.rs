@@ -80,11 +80,16 @@ struct Args {
     /// Equivalent environment variable: `TOKEI_CACHE_SIZE`.
     #[arg(long, default_value_t = 1000usize)]
     cache_size: usize,
+    /// Comma-separated list of allowed git servers; if provided, only queries for
+    /// these domains are permitted. Fallback environment variable: TOKEI_GITSERVER_WHITELIST.
+    #[arg(long)]
+    gitserver_whitelist: Option<String>,
 }
 // App configuration passed to handlers
 #[derive(Clone)]
 struct AppConfig {
     user_whitelist: Option<std::collections::HashSet<String>>,
+    gitserver_whitelist: Option<std::collections::HashSet<String>>,
 }
 use cached::{Cached, Return};
 use csscolorparser::parse;
@@ -188,8 +193,22 @@ async fn main() -> std::io::Result<()> {
             .collect::<std::collections::HashSet<String>>()
     });
 
+    let gitserver_whitelist_value = args
+        .gitserver_whitelist
+        .clone()
+        .or_else(|| std::env::var("TOKEI_GITSERVER_WHITELIST").ok());
+
+    let gitserver_whitelist: Option<std::collections::HashSet<String>> = gitserver_whitelist_value
+        .map(|s| {
+            s.split(',')
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .collect::<std::collections::HashSet<String>>()
+        });
+
     let app_config = web::Data::new(AppConfig {
         user_whitelist: whitelist,
+        gitserver_whitelist: gitserver_whitelist,
     });
 
     HttpServer::new(move || {
@@ -306,6 +325,18 @@ async fn create_badge(
     // For backwards compatibility if a domain isn't specified we append `.com`.
     if !domain.contains('.') {
         domain += ".com";
+    }
+
+    // If a gitserver whitelist is configured, ensure the requested domain is allowed.
+    if let Some(gsw) = &data.gitserver_whitelist {
+        if !gsw.contains(domain.as_ref()) {
+            log::warn!(
+                "Git server {} not in gitserver whitelist, returning forbidden badge",
+                domain
+            );
+            let badge = make_badge_style("", "forbidden", "#e05d44", "plastic", "").await?;
+            return Ok(respond!(Forbidden, badge));
+        }
     }
 
     let url: &str = &format!("https://{}/{}/{}", domain, user, repo);

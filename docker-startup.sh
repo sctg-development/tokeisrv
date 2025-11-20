@@ -36,6 +36,7 @@ set -euo pipefail
 TOKEI_BIND="${TOKEI_BIND:-0.0.0.0}"
 TOKEI_PORT="${TOKEI_PORT:-8000}"
 TOKEI_USER_WHITELIST="${TOKEI_USER_WHITELIST:-}"
+TOKEI_GITSERVER_WHITELIST="${TOKEI_GITSERVER_WHITELIST:-}"
 TOKEI_CACHE_SIZE="${TOKEI_CACHE_SIZE:-1000}"
 TOKEI_CACHE_TTL="${TOKEI_CACHE_TTL:-86400}"  # default to 1 day in seconds
 
@@ -68,6 +69,9 @@ echo "  cache-ttl: $TOKEI_CACHE_TTL"
 if [ -n "$TOKEI_USER_WHITELIST" ]; then
   echo "  user-whitelist: $TOKEI_USER_WHITELIST"
 fi
+if [ -n "$TOKEI_GITSERVER_WHITELIST" ]; then
+  echo "  gitserver-whitelist: $TOKEI_GITSERVER_WHITELIST"
+fi
 
 # Validate TOKEI_USER_WHITELIST format (optional)
 if [ -n "$TOKEI_USER_WHITELIST" ]; then
@@ -91,6 +95,9 @@ fi
 cmd=("$BINARY" --bind "$TOKEI_BIND" --port "$TOKEI_PORT" --cache-size "$TOKEI_CACHE_SIZE" --cache-ttl "$TOKEI_CACHE_TTL")
 if [ -n "$TOKEI_USER_WHITELIST" ]; then
   cmd+=(--user-whitelist "$TOKEI_USER_WHITELIST")
+fi
+if [ -n "$TOKEI_GITSERVER_WHITELIST" ]; then
+  cmd+=(--gitserver-whitelist "$TOKEI_GITSERVER_WHITELIST")
 fi
 cmd+=("$@")
 "${cmd[@]}" &

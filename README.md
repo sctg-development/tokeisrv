@@ -26,6 +26,8 @@ It covers creating a free `.pp.ua` domain, configuring Cloudflare and Cloudflare
 - CLI args and environment variables for server configuration
 - Verbose logs by default, quiet mode via `-q`/`--quiet`
 - Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
+ - Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
+ - Optional git server whitelist to restrict allowed domain hosts for repo cloning (`--gitserver-whitelist`)
 - No git dependencies at runtime
 
 ---
@@ -128,6 +130,7 @@ Default behavior:
 - TTL for cached entries: 1 day (24 hours) (default)
 - You can change the maximum number of cached entries with the CLI flag `--cache-size` or the environment variable `TOKEI_CACHE_SIZE`.
 - Cache TTL can be overridden with CLI flag `--cache-ttl` (seconds) or the environment variable `TOKEI_CACHE_TTL`. CLI takes precedence.
+ - You can restrict which git servers can be queried using `--gitserver-whitelist` or environment variable `TOKEI_GITSERVER_WHITELIST`. If this list is empty, all servers are permitted.
 - The cache follows an LRU (least recently used) policy when space is needed and evicts oldest entries first.
 
 Notes:
