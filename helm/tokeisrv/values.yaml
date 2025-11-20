@@ -16,6 +16,9 @@ service:
 # Example: "alice,bob"
 userWhitelist: ""
 
+cacheTtl: 86400 # Cache TTL in seconds (default: 1 day)
+cacheSize: 1000 # Cache size (default: 1000 entries)
+
 # Pod resource configuration
 resources: {}
 
