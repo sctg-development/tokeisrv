@@ -26,8 +26,7 @@ It covers creating a free `.pp.ua` domain, configuring Cloudflare and Cloudflare
 - CLI args and environment variables for server configuration
 - Verbose logs by default, quiet mode via `-q`/`--quiet`
 - Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
- - Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
- - Optional git server whitelist to restrict allowed domain hosts for repo cloning (`--gitserver-whitelist`)
+- Optional git server whitelist to restrict allowed domain hosts for repo cloning (`--gitserver-whitelist`)
 - No git dependencies at runtime
 
 ---
@@ -201,6 +200,44 @@ helm install tokeisrv helm/tokeisrv --set userWhitelist='alice,bob'
 ```
 
 This feature should be used when you want to operate the service in a managed environment or expose it publicly — it helps ensure only repositories from trusted owners are processed.
+
+Git server whitelist (optional, recommended for security)
+------------------------------------------------------
+You can optionally restrict which git servers (remote domains) the service is permitted to contact. This prevents the service from being used as a proxy to reach arbitrary hosts and reduces attack surface.
+
+How it works:
+- Provide a comma-separated list of allowed domain names (e.g., `github.com,gitlab.com`). If the list is empty (default), all servers are permitted.
+- Whitelist can be set using the CLI flag `--gitserver-whitelist` or the environment variable `TOKEI_GITSERVER_WHITELIST`.
+- When a request targets a repository whose git server domain is not listed, the server returns a red `forbidden` SVG badge (HTTP 403) instead of making the request.
+
+Notes on formatting and behavior:
+- The whitelist expects a comma-separated list of hostnames with no surrounding spaces (whitespace is trimmed). Empty entries are not allowed.
+- Domain matching is exact and case-sensitive. For best results, provide fully-qualified domain names (e.g., `github.com`) and normalize to lowercase if you want to avoid mismatches.
+
+Example usage
+-------------
+Using the CLI:
+```bash
+./tokei_rs --gitserver-whitelist github.com,gitlab.com --bind 0.0.0.0 --port 8000
+```
+
+Using environment variables:
+```bash
+export TOKEI_GITSERVER_WHITELIST="github.com,gitlab.com"
+./tokei_rs
+```
+
+Using Docker (passing env to container):
+```bash
+docker run -e TOKEI_GITSERVER_WHITELIST="github.com,gitlab.com" -p 8000:8000 sctg/tokeisrv:latest
+```
+
+Using Helm (chart value):
+```bash
+helm install tokeisrv helm/tokeisrv --set gitServerWhitelist='github.com,gitlab.com'
+```
+
+This should be used when you want to tightly control which remote git servers are accessed by the service, such as in corporate environments.
 
 ---
 ## Supported Languages
