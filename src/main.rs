@@ -201,7 +201,8 @@ async fn main() -> std::io::Result<()> {
     let gitserver_whitelist: Option<std::collections::HashSet<String>> = gitserver_whitelist_value
         .map(|s| {
             s.split(',')
-                .map(|v| v.trim().to_string())
+                // Normalize to lowercase so domain matching is case-insensitive
+                .map(|v| v.trim().to_ascii_lowercase())
                 .filter(|v| !v.is_empty())
                 .collect::<std::collections::HashSet<String>>()
         });
@@ -328,8 +329,10 @@ async fn create_badge(
     }
 
     // If a gitserver whitelist is configured, ensure the requested domain is allowed.
+    // We normalize the domain to lowercase to compare against the normalized whitelist.
+    let domain_lc = domain.to_ascii_lowercase();
     if let Some(gsw) = &data.gitserver_whitelist {
-        if !gsw.contains(domain.as_ref()) {
+        if !gsw.contains(domain_lc.as_str()) {
             log::warn!(
                 "Git server {} not in gitserver whitelist, returning forbidden badge",
                 domain
@@ -339,7 +342,7 @@ async fn create_badge(
         }
     }
 
-    let url: &str = &format!("https://{}/{}/{}", domain, user, repo);
+    let url: &str = &format!("https://{}/{}/{}", domain_lc, user, repo);
 
     // Use libgit2 via git2 crate to query remote refs and determine branch
     let tmp_bare_dir = TempDir::new()?;

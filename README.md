@@ -129,7 +129,7 @@ Default behavior:
 - TTL for cached entries: 1 day (24 hours) (default)
 - You can change the maximum number of cached entries with the CLI flag `--cache-size` or the environment variable `TOKEI_CACHE_SIZE`.
 - Cache TTL can be overridden with CLI flag `--cache-ttl` (seconds) or the environment variable `TOKEI_CACHE_TTL`. CLI takes precedence.
- - You can restrict which git servers can be queried using `--gitserver-whitelist` or environment variable `TOKEI_GITSERVER_WHITELIST`. If this list is empty, all servers are permitted.
+ - You can restrict which git servers can be queried using `--gitserver-whitelist` or environment variable `TOKEI_GITSERVER_WHITELIST`. If this list is empty, all servers are permitted. The service normalizes whitelist entries and the requested server host to lowercase for comparison; the server <user> part of the repository remains case-sensitive.
 - The cache follows an LRU (least recently used) policy when space is needed and evicts oldest entries first.
 
 Notes:
