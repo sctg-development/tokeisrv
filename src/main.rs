@@ -212,6 +212,22 @@ async fn main() -> std::io::Result<()> {
         gitserver_whitelist: gitserver_whitelist,
     });
 
+    // Inform administrators of whitelists at startup (if configured)
+    if let Some(ws) = &app_config.user_whitelist {
+        if !ws.is_empty() {
+            let mut entries: Vec<String> = ws.iter().cloned().collect();
+            entries.sort();
+            log::info!("User whitelist configured: {}", entries.join(","));
+        }
+    }
+    if let Some(gsw) = &app_config.gitserver_whitelist {
+        if !gsw.is_empty() {
+            let mut entries: Vec<String> = gsw.iter().cloned().collect();
+            entries.sort();
+            log::info!("Git server whitelist configured: {}", entries.join(","));
+        }
+    }
+
     HttpServer::new(move || {
         App::new()
             .app_data(app_config.clone())
