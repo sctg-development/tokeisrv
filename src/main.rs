@@ -84,12 +84,20 @@ struct Args {
     /// these domains are permitted. Fallback environment variable: TOKEI_GITSERVER_WHITELIST.
     #[arg(long)]
     gitserver_whitelist: Option<String>,
+    /// Comma-separated list of file extensions to ignore (without dot). Example: "png,jpg,gz".
+    /// Fallback environment variable: TOKEI_IGNORE_FILETYPE.
+    #[arg(
+        long,
+        default_value = "gfs,xsd,csv,dxf,wkt,dgn,rsc,png,a,so,pc,ai,jpg,gif,gz,bz2,xz,gzip,bzip2,pdf"
+    )]
+    ignore_filetype: String,
 }
 // App configuration passed to handlers
 #[derive(Clone)]
 struct AppConfig {
     user_whitelist: Option<std::collections::HashSet<String>>,
     gitserver_whitelist: Option<std::collections::HashSet<String>>,
+    ignore_filetypes: Option<std::collections::HashSet<String>>,
 }
 use cached::{Cached, Return};
 use csscolorparser::parse;
@@ -207,9 +215,34 @@ async fn main() -> std::io::Result<()> {
                 .collect::<std::collections::HashSet<String>>()
         });
 
+    // Parse ignore filetypes option / env var. Normalize extensions to lowercase
+    let mut ignore_filetype_value = args.ignore_filetype.clone();
+    if ignore_filetype_value
+        == "gfs,xsd,csv,dxf,wkt,dgn,rsc,png,a,so,pc,ai,jpg,gif,gz,bz2,xz,gzip,bzip2,pdf"
+    {
+        if let Ok(env_ignore) = std::env::var("TOKEI_IGNORE_FILETYPE") {
+            if !env_ignore.is_empty() {
+                ignore_filetype_value = env_ignore;
+            }
+        }
+    }
+    let ignore_filetypes: Option<std::collections::HashSet<String>> =
+        if ignore_filetype_value.trim().is_empty() {
+            None
+        } else {
+            Some(
+                ignore_filetype_value
+                    .split(',')
+                    .map(|v| v.trim().to_ascii_lowercase())
+                    .filter(|v| !v.is_empty())
+                    .collect::<std::collections::HashSet<String>>(),
+            )
+        };
+
     let app_config = web::Data::new(AppConfig {
         user_whitelist: whitelist,
         gitserver_whitelist: gitserver_whitelist,
+        ignore_filetypes: ignore_filetypes,
     });
 
     // Inform administrators of whitelists at startup (if configured)
@@ -225,6 +258,13 @@ async fn main() -> std::io::Result<()> {
             let mut entries: Vec<String> = gsw.iter().cloned().collect();
             entries.sort();
             log::info!("Git server whitelist configured: {}", entries.join(","));
+        }
+    }
+    if let Some(ifts) = &app_config.ignore_filetypes {
+        if !ifts.is_empty() {
+            let mut entries: Vec<String> = ifts.iter().cloned().collect();
+            entries.sort();
+            log::info!("Ignore filetypes configured: {}", entries.join(","));
         }
     }
 
@@ -466,7 +506,8 @@ async fn create_badge(
     }
 
     let entry: Return<Vec<(LanguageType, Language)>> =
-        get_statistics(&url, &sha, &branch_name).map_err(actix_web::error::ErrorBadRequest)?;
+        get_statistics(&url, &sha, &branch_name, data.ignore_filetypes.as_ref())
+            .map_err(actix_web::error::ErrorBadRequest)?;
 
     if entry.was_cached {
         log::info!("{}#{}#{} Cache hit", url, sha, branch_name);
@@ -562,12 +603,13 @@ fn etag_identifier(sha: &str, branch_name: &str) -> String {
     with_cached_flag = true,
     ty = "cached::TimedSizedCache<String, cached::Return<Vec<(LanguageType,Language)>>>",
     create = r#"{ let ttl = CACHE_TTL_SECONDS.load(Ordering::Relaxed); let max = CACHE_MAX_ENTRIES.load(Ordering::Relaxed); cached::TimedSizedCache::with_size_and_lifespan(max, std::time::Duration::from_secs(ttl)) }"#,
-    convert = r#"{ repo_identifier(url, _sha, branch_name) }"#
+    convert = r#"{ let mut key = repo_identifier(url, _sha, branch_name); if let Some(ifts) = ignore_filetypes { let mut v: Vec<String> = ifts.iter().cloned().collect(); v.sort(); if !v.is_empty() { key.push('#'); key.push_str(&v.join(",")); } } key }"#
 )]
 fn get_statistics(
     url: &str,
     _sha: &str,
     branch_name: &str,
+    ignore_filetypes: Option<&std::collections::HashSet<String>>,
 ) -> eyre::Result<cached::Return<Vec<(LanguageType, Language)>>> {
     log::info!("{} - Cloning", url);
     let temp_dir: TempDir = TempDir::new()?;
@@ -597,7 +639,29 @@ fn get_statistics(
 
     let mut languages: Languages = Languages::new();
     log::info!("{} - Getting Statistics", url);
-    languages.get_statistics(&[temp_path], &[], &tokei::Config::default());
+    // Build a set of exclude patterns from configured ignore filetypes.
+    // Convert extension `foo` to glob pattern `**/*.foo`.
+    let mut exclude_patterns: Vec<String> = Vec::new();
+    if let Some(ifts) = ignore_filetypes {
+        for ext in ifts {
+            // ignore trailing dots or accidental leading dots
+            let normalized_ext = ext.trim().trim_start_matches('.');
+            if !normalized_ext.is_empty() {
+                exclude_patterns.push(format!("**/*.{}", normalized_ext));
+            }
+        }
+    }
+    // Convert to slice of &str for tokei API
+    let exclude_refs: Vec<&str> = exclude_patterns.iter().map(|s| s.as_str()).collect();
+    languages.get_statistics(
+        &[temp_path],
+        if exclude_refs.is_empty() {
+            &[]
+        } else {
+            &exclude_refs[..]
+        },
+        &tokei::Config::default(),
+    );
 
     let mut iter = languages.iter_mut();
     while let Some((_, language)) = iter.next() {

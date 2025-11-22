@@ -39,6 +39,7 @@ TOKEI_USER_WHITELIST="${TOKEI_USER_WHITELIST:-}"
 TOKEI_GITSERVER_WHITELIST="${TOKEI_GITSERVER_WHITELIST:-}"
 TOKEI_CACHE_SIZE="${TOKEI_CACHE_SIZE:-1000}"
 TOKEI_CACHE_TTL="${TOKEI_CACHE_TTL:-86400}"  # default to 1 day in seconds
+TOKEI_IGNORE_FILETYPE="${TOKEI_IGNORE_FILETYPE:-gfs,xsd,csv,dxf,wkt,dgn,rsc,png,a,so,pc,ai,jpg,gif,gz,bz2,xz,gzip,bzip2,pdf}"
 
 BINARY="/usr/local/bin/tokeisrv"
 
@@ -72,6 +73,9 @@ fi
 if [ -n "$TOKEI_GITSERVER_WHITELIST" ]; then
   echo "  gitserver-whitelist: $TOKEI_GITSERVER_WHITELIST"
 fi
+if [ -n "$TOKEI_IGNORE_FILETYPE" ]; then
+  echo "  ignore-filetypes: $TOKEI_IGNORE_FILETYPE"
+fi
 
 # Validate TOKEI_USER_WHITELIST format (optional)
 if [ -n "$TOKEI_USER_WHITELIST" ]; then
@@ -98,6 +102,9 @@ if [ -n "$TOKEI_USER_WHITELIST" ]; then
 fi
 if [ -n "$TOKEI_GITSERVER_WHITELIST" ]; then
   cmd+=(--gitserver-whitelist "$TOKEI_GITSERVER_WHITELIST")
+fi
+if [ -n "$TOKEI_IGNORE_FILETYPE" ]; then
+  cmd+=(--ignore-filetype "$TOKEI_IGNORE_FILETYPE")
 fi
 cmd+=("$@")
 "${cmd[@]}" &

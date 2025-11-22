@@ -36,6 +36,8 @@ spec:
               value: "{{ .Values.userWhitelist }}"
             - name: TOKEI_GITSERVER_WHITELIST
               value: "{{ .Values.gitServerWhitelist }}"
+            - name: TOKEI_IGNORE_FILETYPE
+              value: "{{ .Values.ignoreFiletypes }}"
             - name: TOKEI_CACHE_TTL
               value: "{{ .Values.cacheTtl }}"
             - name: TOKEI_CACHE_SIZE

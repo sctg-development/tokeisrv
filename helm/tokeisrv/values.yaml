@@ -21,6 +21,10 @@ gitServerWhitelist: ""
 cacheTtl: 86400 # Cache TTL in seconds (default: 1 day)
 cacheSize: 1000 # Cache size (default: 1000 entries)
 
+# Optional list of file extensions to ignore (comma-separated)
+# Default: gfs,xsd,csv,dxf,wkt,dgn,rsc,png,a,so,pc,ai,jpg,gif,gz,bz2,xz,gzip,bzip2,pdf
+ignoreFiletypes: "gfs,xsd,csv,dxf,wkt,dgn,rsc,png,a,so,pc,ai,jpg,gif,gz,bz2,xz,gzip,bzip2,pdf"
+
 # Pod resource configuration
 resources: {}
 

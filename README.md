@@ -27,6 +27,7 @@ It covers creating a free `.pp.ua` domain, configuring Cloudflare and Cloudflare
 - Verbose logs by default, quiet mode via `-q`/`--quiet`
 - Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
 - Optional git server whitelist to restrict allowed domain hosts for repo cloning (`--gitserver-whitelist`)
+ - Optional ignore-filetypes to skip scanning files by extension, e.g. `png`, `jpg`, `gz` (`--ignore-filetype`, `TOKEI_IGNORE_FILETYPE`)
 - No git dependencies at runtime
 
 ---
@@ -52,12 +53,18 @@ Run with custom bind/port and quiet flag (CLI has precedence over env vars):
 
 ```bash
 cargo run --release -- --bind 127.0.0.1 --port 8080 -q
+```
 
-# Adjust cache size
-To control the maximum number of cached entries, provide `--cache-size`. Default is 1000 entries.
+To control the maximum number of cached entries, provide `--cache-size`. Default is 1000 entries:
 
 ```bash
 cargo run --release -- --cache-size 2048
+```
+
+You can also ignore specific file extensions using `--ignore-filetype` (comma-separated, no leading dot) or the environment variable `TOKEI_IGNORE_FILETYPE`:
+
+```bash
+cargo run --release -- --ignore-filetype "png,jpg,gz" --bind 0.0.0.0 --port 8000
 ```
 ```
 
@@ -237,7 +244,48 @@ Using Helm (chart value):
 helm install tokeisrv helm/tokeisrv --set gitServerWhitelist='github.com,gitlab.com'
 ```
 
+Using Helm to configure ignored file extensions (chart value):
+```bash
+helm install tokeisrv helm/tokeisrv --set ignoreFiletypes='png,jpg,gz'
+```
+
 This should be used when you want to tightly control which remote git servers are accessed by the service, such as in corporate environments.
+
+Ignore file types (optional, recommended)
+------------------------------------------------------
+You can optionally configure the service to ignore certain file extensions when scanning repositories (for example, large binaries, images, or archives). This reduces CPU usage and scan time, and is especially useful on hosted builds where you want to avoid scanning generated binaries.
+
+How it works:
+- Provide a comma-separated list of file extensions (no dot) via the CLI flag `--ignore-filetype` or the environment variable `TOKEI_IGNORE_FILETYPE`.
+- The service converts entries such as `png` into a pattern `**/*.png` and passes them as exclude patterns to the `tokei` analyzer.
+
+Notes on formatting and behavior:
+- Case-insensitive: entries are normalized to lowercase.
+- Example default list used by the service: `gfs,xsd,csv,dxf,wkt,dgn,rsc,png,a,so,pc,ai,jpg,gif,gz,bz2,xz,gzip,bzip2,pdf`.
+- To ignore a specific extension, include it without a leading dot: `png` not `.png`.
+
+Example usage
+-------------
+Using the CLI:
+```bash
+./tokei_rs --ignore-filetype png,jpg,gz --bind 0.0.0.0 --port 8000
+```
+
+Using environment variables:
+```bash
+export TOKEI_IGNORE_FILETYPE="png,jpg,gz"
+./tokei_rs
+```
+
+Using Docker (passing env to container):
+```bash
+docker run -e TOKEI_IGNORE_FILETYPE="png,jpg,gz" -p 8000:8000 sctg/tokeisrv:latest
+```
+
+Using Helm (chart value):
+```bash
+helm install tokeisrv helm/tokeisrv --set ignoreFiletypes='png,jpg,gz'
+```
 
 ---
 ## Supported Languages
