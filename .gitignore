@@ -47,3 +47,5 @@ cert.pem
 config.yaml
 credentials.json
 cloudflared/
+cobertura.xml
+

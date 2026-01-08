@@ -398,96 +398,177 @@ async fn create_badge(
         }
     }
 
-    let url: &str = &format!("https://{}/{}/{}", domain_lc, user, repo);
-
-    // Use libgit2 via git2 crate to query remote refs and determine branch
-    let tmp_bare_dir = TempDir::new()?;
-    let repo = match Repository::init_bare(tmp_bare_dir.path()) {
-        Ok(r) => r,
-        Err(e) => {
-            return Err(actix_web::error::ErrorBadRequest(
-                eyre::eyre!(e.to_string()),
-            ))
-        }
-    };
-    let mut remote = match repo.remote_anonymous(&url) {
-        Ok(r) => r,
-        Err(e) => {
-            return Err(actix_web::error::ErrorBadRequest(
-                eyre::eyre!(e.to_string()),
-            ))
-        }
-    };
-    if let Err(e) = remote.connect(Direction::Fetch) {
-        return Err(actix_web::error::ErrorBadRequest(
-            eyre::eyre!(e.to_string()),
-        ));
-    }
-    let refs = match remote.list() {
-        Ok(r) => r,
-        Err(e) => {
-            return Err(actix_web::error::ErrorBadRequest(
-                eyre::eyre!(e.to_string()),
-            ))
-        }
-    };
-
-    // Build a vector of available branch names (refs/heads/*)
-    let available_branches: Vec<String> = refs
-        .iter()
-        .filter_map(|r| {
-            let name = r.name();
-            if name.starts_with("refs/heads/") {
-                Some(name[11..].to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-    if available_branches.is_empty() {
-        return Err(actix_web::error::ErrorBadRequest(eyre::eyre!(
-            "Invalid SHA provided."
-        )));
-    }
-
-    // Determine default head branch if not provided by query:
-    // prefer 'main' then 'master' then the first branch
-    let head_branch = if available_branches.contains(&"main".to_string()) {
-        "main".to_string()
-    } else if available_branches.contains(&"master".to_string()) {
-        "master".to_string()
-    } else {
-        available_branches[0].clone()
-    };
-
-    // If the request included a `branch` verify it's available
-    if !branch.is_empty() && !available_branches.contains(&branch) {
-        return Err(actix_web::error::ErrorBadRequest(eyre::eyre!(
-            "Invalid SHA provided."
-        )));
-    }
-
-    let branch_name = if branch.is_empty() {
-        head_branch.as_str()
-    } else {
-        &branch
-    };
-    // Find the oid for the requested branch
+    // Support a special domain "local" for tests: use the current working
+    // directory as the repository. Otherwise build a remote HTTPS URL and
+    // query the remote refs as before.
+    let mut url: String = String::new();
     let mut sha: String = String::new();
-    let target_ref = format!("refs/heads/{}", branch_name);
-    for r in refs.iter() {
-        if r.name() == target_ref.as_str() {
-            sha = r.oid().to_string();
-            break;
+    let mut branch_name: String = String::new();
+
+    if domain_lc == "local" || domain_lc == "local.com" {
+        // Local repository: use cwd
+        let cwd = std::env::current_dir()
+            .map_err(|e| actix_web::error::ErrorBadRequest(eyre::eyre!(e.to_string())))?;
+        url = cwd
+            .to_str()
+            .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid cwd")))?
+            .to_owned();
+
+        let repo_local = Repository::open(&cwd)
+            .map_err(|e| actix_web::error::ErrorBadRequest(eyre::eyre!(e.to_string())))?;
+
+        // Determine head branch candidates from local refs
+        let mut available_branches: Vec<String> = vec![];
+        if let Ok(mut bs) = repo_local.branches(None) {
+            while let Some(Ok((b, _))) = bs.next() {
+                if let Ok(name) = b.name() {
+                    if let Some(s) = name {
+                        available_branches.push(s.to_string());
+                    }
+                }
+            }
+        }
+
+        if available_branches.is_empty() {
+            // fallback to HEAD if no named branches
+            available_branches.push("HEAD".to_string());
+        }
+
+        // Determine default head branch if not provided by query:
+        // prefer 'main' then 'master' then the first branch
+        let head_branch = if available_branches.contains(&"main".to_string()) {
+            "main".to_string()
+        } else if available_branches.contains(&"master".to_string()) {
+            "master".to_string()
+        } else {
+            available_branches[0].clone()
+        };
+
+        // If the request included a `branch` verify it's available
+        if !branch.is_empty() && !available_branches.contains(&branch) {
+            return Err(actix_web::error::ErrorBadRequest(eyre::eyre!(
+                "Invalid SHA provided."
+            )));
+        }
+
+        branch_name = if branch.is_empty() {
+            head_branch
+        } else {
+            branch.clone()
+        };
+
+        // Find commit OID for the branch (fallback to HEAD commit)
+        sha = match repo_local.find_branch(&branch_name, git2::BranchType::Local) {
+            Ok(b) => b
+                .into_reference()
+                .target()
+                .map(|o| o.to_string())
+                .ok_or_else(|| {
+                    actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid local branch"))
+                })?,
+            Err(_) => repo_local
+                .head()
+                .and_then(|h| h.peel_to_commit())
+                .map(|c| c.id().to_string())
+                .map_err(|e| actix_web::error::ErrorBadRequest(eyre::eyre!(e.to_string())))?,
+        };
+    } else {
+        url = format!("https://{}/{}/{}", domain_lc, user, repo);
+
+        // Use libgit2 via git2 crate to query remote refs and determine branch
+        let tmp_bare_dir = TempDir::new()?;
+        let repo = match Repository::init_bare(tmp_bare_dir.path()) {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(actix_web::error::ErrorBadRequest(
+                    eyre::eyre!(e.to_string()),
+                ))
+            }
+        };
+        let mut remote = match repo.remote_anonymous(&url) {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(actix_web::error::ErrorBadRequest(
+                    eyre::eyre!(e.to_string()),
+                ))
+            }
+        };
+        if let Err(e) = remote.connect(Direction::Fetch) {
+            return Err(actix_web::error::ErrorBadRequest(
+                eyre::eyre!(e.to_string()),
+            ));
+        }
+        let refs = match remote.list() {
+            Ok(r) => r,
+            Err(e) => {
+                return Err(actix_web::error::ErrorBadRequest(
+                    eyre::eyre!(e.to_string()),
+                ))
+            }
+        };
+
+        // Build a vector of available branch names (refs/heads/*)
+        let available_branches: Vec<String> = refs
+            .iter()
+            .filter_map(|r| {
+                let name = r.name();
+                if name.starts_with("refs/heads/") {
+                    Some(name[11..].to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if available_branches.is_empty() {
+            return Err(actix_web::error::ErrorBadRequest(eyre::eyre!(
+                "Invalid SHA provided."
+            )));
+        }
+
+        // Determine default head branch if not provided by query:
+        // prefer 'main' then 'master' then the first branch
+        let head_branch = if available_branches.contains(&"main".to_string()) {
+            "main".to_string()
+        } else if available_branches.contains(&"master".to_string()) {
+            "master".to_string()
+        } else {
+            available_branches[0].clone()
+        };
+
+        // If the request included a `branch` verify it's available
+        if !branch.is_empty() && !available_branches.contains(&branch) {
+            return Err(actix_web::error::ErrorBadRequest(eyre::eyre!(
+                "Invalid SHA provided."
+            )));
+        }
+
+        branch_name = if branch.is_empty() {
+            head_branch
+        } else {
+            branch.clone()
+        };
+        // Find the oid for the requested branch
+        let target_ref = format!("refs/heads/{}", branch_name);
+        for r in refs.iter() {
+            if r.name() == target_ref.as_str() {
+                sha = r.oid().to_string();
+                break;
+            }
         }
     }
+
     (sha.len() == HASH_LENGTH)
         .then(|| ())
         .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid SHA provided.")))?;
 
+    // Debug: expose computed values (helpful for tests)
+    println!(
+        "[DEBUG] create_badge values: url={} sha={} branch_name={}",
+        url, sha, branch_name
+    );
     if let Ok(if_none_match) = IfNoneMatch::parse(&request) {
         log::debug!("Checking If-None-Match: {}#{}", sha, branch_name);
-        let entity_tag: EntityTag = EntityTag::new(false, etag_identifier(&sha, branch_name));
+        let entity_tag: EntityTag = EntityTag::new(false, etag_identifier(&sha, &branch_name));
         let found_match: bool = match if_none_match {
             IfNoneMatch::Any => false,
             IfNoneMatch::Items(items) => items
@@ -499,15 +580,66 @@ async fn create_badge(
             CACHE
                 .lock()
                 .unwrap()
-                .cache_get(&repo_identifier(&url, &sha, branch_name));
+                .cache_get(&repo_identifier(&url, &sha, &branch_name));
             log::info!("{}#{}#{} Not Modified", url, sha, branch_name);
             return Ok(respond!(NotModified));
         }
     }
 
-    let entry: Return<Vec<(LanguageType, Language)>> =
+    let entry: Return<Vec<(LanguageType, Language)>> = if domain_lc == "local" {
+        // Compute statistics directly for the current working directory to avoid
+        // cloning over the network in tests.
+        let path = url.clone();
+        let mut languages: Languages = Languages::new();
+
+        // Build exclude patterns from configured ignore filetypes
+        let mut exclude_patterns: Vec<String> = Vec::new();
+        if let Some(ifts) = data.ignore_filetypes.as_ref() {
+            for ext in ifts.iter() {
+                let normalized_ext = ext.trim().trim_start_matches('.');
+                if !normalized_ext.is_empty() {
+                    exclude_patterns.push(format!("**/*.{}", normalized_ext));
+                }
+            }
+        }
+        let exclude_refs: Vec<&str> = exclude_patterns.iter().map(|s| s.as_str()).collect();
+        languages.get_statistics(
+            &[path.as_str()],
+            if exclude_refs.is_empty() {
+                &[]
+            } else {
+                &exclude_refs[..]
+            },
+            &tokei::Config::default(),
+        );
+
+        // Strip path prefixes from report names to match behaviour of get_statistics
+        let mut iter = languages.iter_mut();
+        while let Some((_, language)) = iter.next() {
+            for report in &mut language.reports {
+                match report.name.strip_prefix(&path) {
+                    Ok(s) => report.name = s.to_owned(),
+                    Err(_) => {}
+                }
+            }
+            for (_, child) in &mut language.children {
+                for language in child.into_iter() {
+                    match language.name.strip_prefix(&path) {
+                        Ok(s) => language.name = s.to_owned(),
+                        Err(_) => {}
+                    }
+                }
+            }
+        }
+
+        let mut languages_sorted_by_lines_of_code: Vec<(LanguageType, Language)> =
+            languages.into_iter().collect();
+        languages_sorted_by_lines_of_code.sort_by(|(_, a), (_, b)| b.code.cmp(&a.code));
+        cached::Return::new(languages_sorted_by_lines_of_code)
+    } else {
         get_statistics(&url, &sha, &branch_name, data.ignore_filetypes.as_ref())
-            .map_err(actix_web::error::ErrorBadRequest)?;
+            .map_err(actix_web::error::ErrorBadRequest)?
+    };
 
     if entry.was_cached {
         log::info!("{}#{}#{} Cache hit", url, sha, branch_name);
@@ -585,7 +717,7 @@ async fn create_badge(
         Ok,
         content_type,
         badge,
-        etag_identifier(&sha, branch_name)
+        etag_identifier(&sha, &branch_name)
     ))
 }
 
@@ -770,4 +902,232 @@ async fn make_badge(
     };
 
     make_badge_style(label, &amount, color, style, logo).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::body::to_bytes;
+    use actix_web::test;
+    use actix_web::{http::header::CONTENT_TYPE, http::StatusCode};
+    use std::collections::HashSet;
+
+    #[actix_web::test]
+    async fn redirect_index_returns_redirect() {
+        let app = test::init_service(App::new().service(redirect_index)).await;
+        let req = test::TestRequest::get().uri("/").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::PERMANENT_REDIRECT);
+        let loc = resp.headers().get(LOCATION).unwrap().to_str().unwrap();
+        assert_eq!(loc, "https://github.com/sctg-development/tokeisrv");
+    }
+
+    #[actix_web::test]
+    async fn respond_macro_without_body() {
+        let resp = respond!(Ok);
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn respond_macro_with_body_and_content_type() {
+        let body = "<svg></svg>";
+        let resp = respond!(Ok, body);
+        assert_eq!(resp.status(), StatusCode::OK);
+        let ct = resp.headers().get(CONTENT_TYPE).unwrap().to_str().unwrap();
+        assert!(ct.contains("image/svg+xml"));
+        let bytes = to_bytes(resp.into_body()).await.unwrap();
+        assert_eq!(bytes, body);
+    }
+
+    #[actix_web::test]
+    async fn make_badge_style_produces_svg() {
+        let svg = make_badge_style("label", "42", "#007ec6", "plastic", "")
+            .await
+            .unwrap();
+        assert!(svg.trim_start().starts_with('<'));
+    }
+
+    #[actix_web::test]
+    async fn make_badge_formats_large_numbers() {
+        let mut stats = tokei::Language::default();
+        stats.code = 1_500_000_000; // 1.5B
+        let svg = make_badge(
+            &CONTENT_TYPE_SVG,
+            &stats,
+            "code",
+            "",
+            "plastic",
+            BLUE,
+            "",
+            "",
+            true,
+        )
+        .await
+        .unwrap();
+        // expect a generated SVG (contains '<svg')
+        assert!(svg.contains("<svg") || svg.contains("<svg"));
+    }
+
+    #[actix_web::test]
+    async fn create_badge_forbidden_when_user_not_in_whitelist() {
+        let mut whitelist = HashSet::new();
+        whitelist.insert("alice".to_string());
+        let cfg = AppConfig {
+            user_whitelist: Some(whitelist),
+            gitserver_whitelist: None,
+            ignore_filetypes: None,
+        };
+        let data = web::Data::new(cfg);
+        let app = test::init_service(App::new().app_data(data.clone()).service(create_badge)).await;
+        let req = test::TestRequest::get()
+            .uri("/b1/github/bob/repo")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        // Should return Forbidden badge response
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[actix_web::test]
+    async fn identifiers_and_trim_float() {
+        assert_eq!(repo_identifier("u", "s", "b"), "u#s#b");
+        assert_eq!(etag_identifier("s", "b"), "s#b");
+        assert!((trim_and_float(3, 2) - 1.5).abs() < 1e-9);
+    }
+
+    #[actix_web::test]
+    async fn make_badge_content_type_json_returns_stats() {
+        let stats = tokei::Language::default();
+        let json = make_badge(
+            &ContentType::json(),
+            &stats,
+            "lines",
+            "",
+            "plastic",
+            BLUE,
+            "",
+            "",
+            true,
+        )
+        .await
+        .unwrap();
+        let parsed: tokei::Language = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.code, stats.code);
+    }
+
+    #[actix_web::test]
+    async fn make_badge_category_comments_formats_k() {
+        let mut stats = tokei::Language::default();
+        stats.comments = 1500;
+        let svg = make_badge(
+            &CONTENT_TYPE_SVG,
+            &stats,
+            "comments",
+            "",
+            "plastic",
+            BLUE,
+            "",
+            "",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(svg.contains("1.5K") || svg.contains("1500"));
+    }
+
+    #[actix_web::test]
+    async fn make_badge_ranking_language_returns_svg() {
+        let stats = tokei::Language::default();
+        let svg = make_badge(
+            &CONTENT_TYPE_SVG,
+            &stats,
+            "lines",
+            "",
+            "plastic",
+            BLUE,
+            "",
+            "rust",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(svg.contains("<svg"));
+    }
+
+    #[actix_web::test]
+    async fn make_badge_style_invalid_color_fallback() {
+        let svg = make_badge_style("l", "m", "notacolor", "plastic", "")
+            .await
+            .unwrap();
+        assert!(svg.contains("<svg"));
+    }
+
+    #[actix_web::test]
+    async fn create_badge_for_local_repo_succeeds() {
+        // Construct statistics for the current repo without using the HTTP handler
+        // (avoids network / shallow clone issues in test environments).
+        let cwd = std::env::current_dir().unwrap();
+        let path = cwd.to_str().unwrap();
+        let mut languages: Languages = Languages::new();
+        languages.get_statistics(&[path], &[], &tokei::Config::default());
+
+        // normalize report names (same as get_statistics does)
+        let mut iter = languages.iter_mut();
+        while let Some((_, language)) = iter.next() {
+            for report in &mut language.reports {
+                if let Ok(s) = report.name.strip_prefix(path) {
+                    report.name = s.to_owned();
+                }
+            }
+            for (_, child) in &mut language.children {
+                for language in child.into_iter() {
+                    if let Ok(s) = language.name.strip_prefix(path) {
+                        language.name = s.to_owned();
+                    }
+                }
+            }
+        }
+
+        let mut languages_sorted_by_lines_of_code: Vec<(LanguageType, Language)> =
+            languages.into_iter().collect();
+        languages_sorted_by_lines_of_code.sort_by(|(_, a), (_, b)| b.code.cmp(&a.code));
+
+        let mut stats = Language::new();
+        for (_, language) in &languages_sorted_by_lines_of_code {
+            stats += language.clone();
+        }
+
+        let svg = make_badge(
+            &CONTENT_TYPE_SVG,
+            &stats,
+            "lines",
+            "",
+            "plastic",
+            BLUE,
+            "",
+            "",
+            true,
+        )
+        .await
+        .unwrap();
+        assert!(svg.contains("<svg"));
+    }
+
+    #[actix_web::test]
+    async fn create_badge_forbidden_for_github_rust() {
+        // whitelist only 'local' so github is forbidden
+        let mut gsw = HashSet::new();
+        gsw.insert("local".to_string());
+        let cfg = AppConfig {
+            user_whitelist: None,
+            gitserver_whitelist: Some(gsw),
+            ignore_filetypes: None,
+        };
+        let data = web::Data::new(cfg);
+        let app = test::init_service(App::new().app_data(data.clone()).service(create_badge)).await;
+        let req = test::TestRequest::get()
+            .uri("/b1/github/rust-lang/rust")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
 }

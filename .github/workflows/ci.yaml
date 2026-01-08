@@ -1,0 +1,103 @@
+name: CI/CD
+on:
+    push:
+        branches:
+            - main
+            - "release/*"
+    pull_request:
+        branches:
+            - main
+            - "release/*"
+
+jobs:
+    build:
+        name: CI/CD for ${{ matrix.target }} on ${{ matrix.os }}
+        runs-on: ${{ matrix.os }}
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - os: ubuntu-latest
+                      target: x86_64-unknown-linux-musl
+                    - os: ubuntu-latest
+                      target: x86_64-unknown-linux-gnu
+                    - os: windows-latest
+                      target: x86_64-pc-windows-msvc
+                    - os: macos-latest
+                      target: x86_64-apple-darwin
+                    - os: macos-latest
+                      target: aarch64-apple-darwin
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v6
+
+            - name: Cache cargo registry
+              uses: actions/cache@v5
+              with:
+                  path: ~/.cargo/registry
+                  key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+            - name: Install Rust toolchain
+              shell: bash
+              run: |
+                  rustup install stable
+                  rustup default stable
+                  rustup target add ${{ matrix.target }} || true
+
+            - name: Install cargo-binstall
+              uses: cargo-bins/cargo-binstall@v1.16.6
+
+            - name: Install tarpaulin with binstall
+              shell: bash
+              run: |
+                  cargo binstall cargo-tarpaulin --force
+
+            - name: Cache cargo build artifacts (target)
+              uses: actions/cache@v5
+              with:
+                  path: target
+                  key: ${{ runner.os }}-cargo-target-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+                  restore-keys: |
+                      ${{ runner.os }}-cargo-target-${{ matrix.target }}-
+                      ${{ runner.os }}-cargo-target-
+
+            - name: Build project
+              shell: bash
+              run: |
+                  cargo build --release --target ${{ matrix.target }}
+
+            - name: Run tests
+              shell: bash
+              run: |
+                  cargo test --target ${{ matrix.target }}
+
+            - name: Run code coverage (Linux x86_64-unknown-linux-gnu only)
+              if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+              shell: bash
+              run: |
+                  cargo tarpaulin --out Xml --target ${{ matrix.target }}
+
+            - name: Upload code coverage report artifact (Linux x86_64-unknown-linux-gnu only)
+              if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+              uses: actions/upload-artifact@v6
+              with:
+                  name: code-coverage-${{ matrix.target }}
+                  path: coverage.xml
+
+            - name: Upload coverage to Codecov (Linux x86_64-unknown-linux-gnu only)
+              if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+              uses: codecov/codecov-action@v3
+              with:
+                  files: coverage.xml
+                  flags: tarpaulin
+                  slug: sctg-development/tokeisrv
+                  token: ${{ secrets.CODECOV_TOKEN }}
+              env:
+                  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+            - name: Upload build artifacts
+              uses: actions/upload-artifact@v6
+              with:
+                  name: build-${{ matrix.target }}
+                  path: target/release/tokeisrv
