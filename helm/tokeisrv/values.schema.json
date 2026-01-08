@@ -36,6 +36,11 @@
                 }
             }
         },
+        "adminPassword": {
+            "type": "string",
+            "default": "",
+            "description": "Comma-separated list of admin password hashes produced by openssl passwd -5 (SHA-256) or -6 (SHA-512)."
+        },
         "cloudflared": {
             "type": "object",
             "properties": {

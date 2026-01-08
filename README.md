@@ -27,7 +27,8 @@ It covers creating a free `.pp.ua` domain, configuring Cloudflare and Cloudflare
 - Verbose logs by default, quiet mode via `-q`/`--quiet`
 - Optional user whitelist to limit which repository owners can be cloned (`--user-whitelist`)
 - Optional git server whitelist to restrict allowed domain hosts for repo cloning (`--gitserver-whitelist`)
- - Optional ignore-filetypes to skip scanning files by extension, e.g. `png`, `jpg`, `gz` (`--ignore-filetype`, `TOKEI_IGNORE_FILETYPE`)
+- Admin-protected flush-cache action (`--admin-password` / `TOKEI_ADMIN_PASSWORD`) — accepts only SHA-256/512 crypt hashes (openssl `-5`/`-6`)
+ - Optional ignore-filetypes to skip scanning files by extension, e.g. `png`, `jpg`, `gz` (`--ignore-filetype`, `TOKEI_IGNORE_FILETYPE`) 
 - No git dependencies at runtime
 
 ---
@@ -169,6 +170,42 @@ RUST_LOG=actix_web=info,target=debug cargo run --release --
 
 - The service clones remote repositories to a temporary directory — ensure you trust the sources you allow or limit access.
 
+Admin password & administrative actions (optional)
+-------------------------------------------------
+This service exposes a lightweight administrative action to flush cached statistics for a given repository. The flush action is protected by an administrative password mechanism to avoid accidental or malicious cache invalidation.
+
+How it works:
+- Provide one or more **hashed** admin passwords compatible with `openssl passwd` (SHA-based crypt hashes). These are configured either via the CLI option `--admin-password` (can be specified multiple times) or the environment variable `TOKEI_ADMIN_PASSWORD` (comma-separated list of hashes).
+- Each stored value must be the hashed result produced by `openssl passwd` using **SHA-256** or **SHA-512** crypt formats (i.e., `-5` or `-6`). Example generation:
+
+```bash
+# SHA-512
+openssl passwd -6 -salt testsalt supersecret
+# SHA-256
+openssl passwd -5 -salt testsalt supersecret
+```
+
+- When invoking the admin action over HTTP, the client provides the password in clear text as the `admin-password` query parameter; the server computes the compatible hash and compares it against the stored hashes.
+
+Important security note and allowed algorithms
+---------------------------------------------
+- For security and portability the server **only accepts SHA-based crypt hashes** produced by `openssl passwd -5` (SHA-256) or `openssl passwd -6` (SHA-512).
+- If an administrator attempts to configure a hashed password using another crypt algorithm (for example, MD5/`-1`), the server will **reject the request** when that hash is used and return an HTTP 403 response with the body:
+
+```
+403 - password algorithm not allowed
+```
+
+The flush-cache admin action
+---------------------------
+- Endpoint: `GET /b1/{domain}/{user}/{repo}?action=flush-cache&admin-password=<password>`
+- Behavior: if authentication succeeds, the service removes any cached entries for the specified repository (both branch and HEAD entries when applicable) and returns a success badge; otherwise it returns a forbidden badge (or the explicit 403 message above when a disallowed algorithm is detected).
+
+Notes and future direction:
+- To generate hashes portable across platforms, use `openssl passwd -5` or `-6` as shown above.
+- We plan to eventually replace the current reliance on the `openssl` CLI with a pure-Rust verifier to simplify CI/containers and remove the runtime dependency.
+
+
 User whitelist (optional, recommended for security)
 -----------------------------------------------
 You can optionally restrict which repository owners the service is permitted to analyze. This prevents the server from cloning arbitrary repositories and reduces attack surface.
@@ -204,6 +241,8 @@ docker run -e TOKEI_USER_WHITELIST="alice,bob" -p 8000:8000 sctg/tokeisrv:latest
 Using Helm (chart value):
 ```bash
 helm install tokeisrv helm/tokeisrv --set userWhitelist='alice,bob'
+# Example: set admin passwords (comma-separated hashed values, use openssl -5/-6 to generate)
+helm install tokeisrv helm/tokeisrv --set adminPassword='$6$testsalt$ABCD...,$6$othersalt$EFGH...'
 ```
 
 This feature should be used when you want to operate the service in a managed environment or expose it publicly — it helps ensure only repositories from trusted owners are processed.

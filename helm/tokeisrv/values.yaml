@@ -17,6 +17,10 @@ service:
 userWhitelist: ""
 # Optional whitelist of git servers (comma-separated). If set, only these domains can be analyzed.
 gitServerWhitelist: ""
+# Optional admin password hashes (comma-separated). Each value should be the hashed output of
+# `openssl passwd -5` or `openssl passwd -6` (SHA-256 or SHA-512 crypt). Only $5/$6 are accepted.
+# Example: "$6$testsalt$...,$6$othersalt$..."
+adminPassword: ""
 
 cacheTtl: 86400 # Cache TTL in seconds (default: 1 day)
 cacheSize: 1000 # Cache size (default: 1000 entries)

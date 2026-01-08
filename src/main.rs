@@ -91,6 +91,12 @@ struct Args {
         default_value = "gfs,xsd,csv,dxf,wkt,dgn,rsc,png,a,so,pc,ai,jpg,gif,gz,bz2,xz,gzip,bzip2,pdf"
     )]
     ignore_filetype: String,
+
+    /// One or more admin password hashes compatible with `openssl passwd`.
+    /// These should be provided as the hashed password output from `openssl passwd` and
+    /// will not be stored in clear text. Multiple `--admin-password` options are allowed.
+    #[arg(long = "admin-password")]
+    admin_password: Vec<String>,
 }
 // App configuration passed to handlers
 #[derive(Clone)]
@@ -98,12 +104,15 @@ struct AppConfig {
     user_whitelist: Option<std::collections::HashSet<String>>,
     gitserver_whitelist: Option<std::collections::HashSet<String>>,
     ignore_filetypes: Option<std::collections::HashSet<String>>,
+    admin_passwords: Option<std::collections::HashSet<String>>,
 }
 use cached::{Cached, Return};
 use csscolorparser::parse;
 use once_cell::sync::Lazy;
 use rsbadges::{Badge, Style};
 use std::collections::HashSet;
+use std::io::Write;
+use std::process::{Command, Stdio};
 use tempfile::TempDir;
 use tokei::{Language, LanguageType, Languages};
 
@@ -201,6 +210,20 @@ async fn main() -> std::io::Result<()> {
             .collect::<std::collections::HashSet<String>>()
     });
 
+    let admin_passwords_value: Option<String> = if !args.admin_password.is_empty() {
+        Some(args.admin_password.join(","))
+    } else {
+        std::env::var("TOKEI_ADMIN_PASSWORD").ok()
+    };
+
+    let admin_passwords: Option<std::collections::HashSet<String>> =
+        admin_passwords_value.map(|s| {
+            s.split(',')
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .collect::<std::collections::HashSet<String>>()
+        });
+
     let gitserver_whitelist_value = args
         .gitserver_whitelist
         .clone()
@@ -243,6 +266,7 @@ async fn main() -> std::io::Result<()> {
         user_whitelist: whitelist,
         gitserver_whitelist: gitserver_whitelist,
         ignore_filetypes: ignore_filetypes,
+        admin_passwords: admin_passwords,
     });
 
     // Inform administrators of whitelists at startup (if configured)
@@ -327,6 +351,9 @@ struct BadgeQuery {
     show_language: Option<String>,
     language_rank: Option<String>,
     branch: Option<String>,
+    action: Option<String>,
+    #[serde(rename = "admin-password")]
+    admin_password: Option<String>,
 }
 
 #[get("/b1/{domain}/{user}/{repo}")]
@@ -398,21 +425,67 @@ async fn create_badge(
         }
     }
 
-    // Support a special domain "local" for tests: use the current working
-    // directory as the repository. Otherwise build a remote HTTPS URL and
-    // query the remote refs as before.
+    // Support a special domain "local" for tests: derive the repo URL from
+    // the current working directory. Otherwise build a remote HTTPS URL.
+    let repo_url: String = if domain_lc == "local" || domain_lc == "local.com" {
+        // Local repository: use cwd
+        let cwd = std::env::current_dir()
+            .map_err(|e| actix_web::error::ErrorBadRequest(eyre::eyre!(e.to_string())))?;
+        cwd.to_str()
+            .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid cwd")))?
+            .to_owned()
+    } else {
+        format!("https://{}/{}/{}", domain_lc, user, repo)
+    };
+
+    // If this is an admin action 'flush-cache', handle it early without cloning
+    if let Some(action_value) = &query.action {
+        if action_value == "flush-cache" {
+            // Verify admin password (only allow SHA-based algorithms $5 and $6)
+            let provided = query
+                .admin_password
+                .clone()
+                .unwrap_or_else(|| "".to_owned());
+            match verify_admin_password(&provided, &data.admin_passwords) {
+                Ok(true) => {
+                    // authorized
+                }
+                Ok(false) => {
+                    log::warn!(
+                        "Admin authentication failed for flush-cache on {}",
+                        repo_url
+                    );
+                    let badge = make_badge_style("", "forbidden", "#e05d44", "plastic", "").await?;
+                    return Ok(respond!(Forbidden, badge));
+                }
+                Err(PasswordVerifyError::AlgorithmNotAllowed) => {
+                    log::warn!(
+                        "Admin authentication rejected due to disallowed algorithm for {}",
+                        repo_url
+                    );
+                    let body = "403 - password algorithm not allowed".to_string();
+                    return Ok(respond!(Forbidden, body));
+                }
+            }
+            let removed = flush_cache_for_repo(&repo_url);
+            log::info!(
+                "Admin flush-cache: removed {} entries for {}",
+                removed,
+                repo_url
+            );
+            let badge = make_badge_style("", "cache flushed", BLUE, "plastic", "").await?;
+            return Ok(respond!(Ok, badge));
+        }
+    }
+
     let mut url: String = String::new();
     let mut sha: String = String::new();
     let mut branch_name: String = String::new();
 
     if domain_lc == "local" || domain_lc == "local.com" {
         // Local repository: use cwd
-        let cwd = std::env::current_dir()
-            .map_err(|e| actix_web::error::ErrorBadRequest(eyre::eyre!(e.to_string())))?;
-        url = cwd
-            .to_str()
-            .ok_or_else(|| actix_web::error::ErrorBadRequest(eyre::eyre!("Invalid cwd")))?
-            .to_owned();
+        let cwd = std::path::Path::new(&repo_url);
+        url = repo_url.clone();
 
         let repo_local = Repository::open(&cwd)
             .map_err(|e| actix_web::error::ErrorBadRequest(eyre::eyre!(e.to_string())))?;
@@ -473,7 +546,7 @@ async fn create_badge(
                 .map_err(|e| actix_web::error::ErrorBadRequest(eyre::eyre!(e.to_string())))?,
         };
     } else {
-        url = format!("https://{}/{}/{}", domain_lc, user, repo);
+        url = repo_url.clone();
 
         // Use libgit2 via git2 crate to query remote refs and determine branch
         let tmp_bare_dir = TempDir::new()?;
@@ -818,6 +891,129 @@ fn trim_and_float(num: usize, trim: usize) -> f64 {
     (num as f64) / (trim as f64)
 }
 
+#[derive(Debug)]
+enum PasswordVerifyError {
+    AlgorithmNotAllowed,
+}
+
+fn verify_admin_password(
+    provided: &str,
+    hashes: &Option<std::collections::HashSet<String>>,
+) -> Result<bool, PasswordVerifyError> {
+    // Verify using the OpenSSL CLI so hashes are compatible with `openssl passwd`.
+    // Restrict to SHA-based algorithms only ($5 and $6).
+    if hashes.is_none() {
+        return Ok(false);
+    }
+    for h in hashes.as_ref().unwrap().iter() {
+        // Expecting formats like: $6$salt$rest
+        if !h.starts_with('$') {
+            continue;
+        }
+        let parts: Vec<&str> = h.splitn(4, '$').collect();
+        if parts.len() < 4 {
+            continue;
+        }
+        let id = parts[1];
+        let salt = parts[2];
+        // Only allow SHA-based crypt: id 6 (sha512) and 5 (sha256). Reject others explicitly.
+        let flag = match id {
+            "6" => "-6",
+            "5" => "-5",
+            _ => return Err(PasswordVerifyError::AlgorithmNotAllowed),
+        };
+
+        let mut cmd = Command::new("openssl");
+        cmd.arg("passwd")
+            .arg(flag)
+            .arg("-salt")
+            .arg(salt)
+            .arg("-stdin")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped());
+        match cmd.spawn() {
+            Ok(mut child) => {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(provided.as_bytes());
+                }
+                if let Ok(output) = child.wait_with_output() {
+                    if output.status.success() {
+                        let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if out == *h {
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+            Err(_) => continue,
+        }
+    }
+    Ok(false)
+}
+
+fn flush_cache_for_repo(url: &str) -> usize {
+    // Determine branch SHAs for the target repo (local path or remote URL), then remove
+    // each exact repo_identifier from the cache.
+    let mut removed = 0usize;
+
+    // Helper to remove a specific key
+    let mut remove_key = |key: String| {
+        if CACHE.lock().unwrap().cache_remove(&key).is_some() {
+            removed += 1;
+        }
+    };
+
+    // If this looks like a local path, try opening it
+    if std::path::Path::new(url).exists() {
+        if let Ok(repo) = Repository::open(url) {
+            if let Ok(mut bs) = repo.branches(None) {
+                while let Some(Ok((b, _))) = bs.next() {
+                    if let Ok(name_opt) = b.name() {
+                        if let Some(name) = name_opt {
+                            if let Ok(o) = repo.find_branch(name, git2::BranchType::Local) {
+                                if let Some(oid) = o.into_reference().target() {
+                                    let key = repo_identifier(url, &oid.to_string(), name);
+                                    remove_key(key);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Also remove HEAD commit entry if present
+            if let Ok(head) = repo.head() {
+                if let Ok(commit) = head.peel_to_commit() {
+                    let key = repo_identifier(url, &commit.id().to_string(), "HEAD");
+                    remove_key(key);
+                }
+            }
+            return removed;
+        }
+    }
+
+    // Otherwise attempt to query remote refs using a bare temporary repo
+    if let Ok(tmp) = TempDir::new() {
+        if let Ok(bare) = Repository::init_bare(tmp.path()) {
+            if let Ok(mut remote) = bare.remote_anonymous(url) {
+                if remote.connect(Direction::Fetch).is_ok() {
+                    if let Ok(refs) = remote.list() {
+                        for r in refs.iter() {
+                            if r.name().starts_with("refs/heads/") {
+                                let branch = r.name()[11..].to_string();
+                                let oid = r.oid().to_string();
+                                let key = repo_identifier(url, &oid, &branch);
+                                remove_key(key);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    removed
+}
+
 async fn make_badge_style(
     label: &str,
     msg: &str,
@@ -976,6 +1172,7 @@ mod tests {
             user_whitelist: Some(whitelist),
             gitserver_whitelist: None,
             ignore_filetypes: None,
+            admin_passwords: None,
         };
         let data = web::Data::new(cfg);
         let app = test::init_service(App::new().app_data(data.clone()).service(create_badge)).await;
@@ -1121,6 +1318,7 @@ mod tests {
             user_whitelist: None,
             gitserver_whitelist: Some(gsw),
             ignore_filetypes: None,
+            admin_passwords: None,
         };
         let data = web::Data::new(cfg);
         let app = test::init_service(App::new().app_data(data.clone()).service(create_badge)).await;
@@ -1129,5 +1327,167 @@ mod tests {
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[actix_web::test]
+    async fn admin_flush_cache_success() {
+        // Prepare admin password hash using openssl CLI
+        let pwd = "supersecret";
+        let salt = "testsalt"; // SHA-512 style salt
+        let hash = {
+            let mut cmd = Command::new("openssl");
+            cmd.arg("passwd")
+                .arg("-6")
+                .arg("-salt")
+                .arg(salt)
+                .arg("-stdin")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped());
+            let mut c = cmd.spawn().expect("failed to spawn openssl");
+            c.stdin.take().unwrap().write_all(pwd.as_bytes()).unwrap();
+            let out = c.wait_with_output().expect("openssl failed");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let mut apw = std::collections::HashSet::new();
+        apw.insert(hash.clone());
+
+        let cfg = AppConfig {
+            user_whitelist: None,
+            gitserver_whitelist: None,
+            ignore_filetypes: None,
+            admin_passwords: Some(apw),
+        };
+        let data = web::Data::new(cfg);
+
+        // Insert an entry into the cache for the target repo (use local path to avoid network)
+        let cwd = std::env::current_dir().unwrap();
+        let repo_url = cwd.to_str().unwrap().to_string();
+        // Use the local HEAD commit so flush can discover and remove it
+        let repo_local = Repository::open(&cwd).unwrap();
+        let head_commit = repo_local.head().and_then(|h| h.peel_to_commit()).unwrap();
+        let key = repo_identifier(&repo_url, &head_commit.id().to_string(), "HEAD");
+        CACHE
+            .lock()
+            .unwrap()
+            .cache_set(key.clone(), cached::Return::new(vec![]));
+        assert!(CACHE.lock().unwrap().cache_get(&key).is_some());
+
+        let app = test::init_service(App::new().app_data(data.clone()).service(create_badge)).await;
+        let req = test::TestRequest::get()
+            .uri("/b1/local/anyuser/anyrepo?action=flush-cache&admin-password=supersecret")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        // ensure cache key has been removed
+        assert!(CACHE.lock().unwrap().cache_get(&key).is_none());
+    }
+
+    #[actix_web::test]
+    async fn admin_flush_cache_bad_password() {
+        // Prepare admin password hash using openssl CLI
+        let pwd = "supersecret";
+        let salt = "testsalt"; // SHA-512 style salt
+        let hash = {
+            let mut cmd = Command::new("openssl");
+            cmd.arg("passwd")
+                .arg("-6")
+                .arg("-salt")
+                .arg(salt)
+                .arg("-stdin")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped());
+            let mut c = cmd.spawn().expect("failed to spawn openssl");
+            c.stdin.take().unwrap().write_all(pwd.as_bytes()).unwrap();
+            let out = c.wait_with_output().expect("openssl failed");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let mut apw = std::collections::HashSet::new();
+        apw.insert(hash.clone());
+
+        let cfg = AppConfig {
+            user_whitelist: None,
+            gitserver_whitelist: None,
+            ignore_filetypes: None,
+            admin_passwords: Some(apw),
+        };
+        let data = web::Data::new(cfg);
+
+        // Insert an entry into the cache for the target repo (use local path to avoid network)
+        let cwd = std::env::current_dir().unwrap();
+        let repo_url = cwd.to_str().unwrap().to_string();
+        // Use the local HEAD commit so flush can discover and remove it
+        let repo_local = Repository::open(&cwd).unwrap();
+        let head_commit = repo_local.head().and_then(|h| h.peel_to_commit()).unwrap();
+        let key = repo_identifier(&repo_url, &head_commit.id().to_string(), "HEAD");
+        CACHE
+            .lock()
+            .unwrap()
+            .cache_set(key.clone(), cached::Return::new(vec![]));
+        assert!(CACHE.lock().unwrap().cache_get(&key).is_some());
+
+        let app = test::init_service(App::new().app_data(data.clone()).service(create_badge)).await;
+        let req = test::TestRequest::get()
+            .uri("/b1/local/anyuser/anyrepo?action=flush-cache&admin-password=badpass")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        // ensure cache key still exists
+        assert!(CACHE.lock().unwrap().cache_get(&key).is_some());
+    }
+
+    #[actix_web::test]
+    async fn admin_flush_cache_algorithm_not_allowed() {
+        // Prepare admin password hash using openssl CLI with MD5 (-1) which is disallowed by policy
+        let pwd = "supersecret";
+        let hash = {
+            let mut cmd = Command::new("openssl");
+            cmd.arg("passwd")
+                .arg("-1")
+                .arg("-salt")
+                .arg("testsalt")
+                .arg("-stdin")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped());
+            let mut c = cmd.spawn().expect("failed to spawn openssl");
+            c.stdin.take().unwrap().write_all(pwd.as_bytes()).unwrap();
+            let out = c.wait_with_output().expect("openssl failed");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let mut apw = std::collections::HashSet::new();
+        apw.insert(hash.clone());
+
+        let cfg = AppConfig {
+            user_whitelist: None,
+            gitserver_whitelist: None,
+            ignore_filetypes: None,
+            admin_passwords: Some(apw),
+        };
+        let data = web::Data::new(cfg);
+
+        // Insert an entry into the cache for the target repo (use local path to avoid network)
+        let cwd = std::env::current_dir().unwrap();
+        let repo_url = cwd.to_str().unwrap().to_string();
+        // Use the local HEAD commit so flush can discover and remove it
+        let repo_local = Repository::open(&cwd).unwrap();
+        let head_commit = repo_local.head().and_then(|h| h.peel_to_commit()).unwrap();
+        let key = repo_identifier(&repo_url, &head_commit.id().to_string(), "HEAD");
+        CACHE
+            .lock()
+            .unwrap()
+            .cache_set(key.clone(), cached::Return::new(vec![]));
+        assert!(CACHE.lock().unwrap().cache_get(&key).is_some());
+
+        let app = test::init_service(App::new().app_data(data.clone()).service(create_badge)).await;
+        let req = test::TestRequest::get()
+            .uri("/b1/local/anyuser/anyrepo?action=flush-cache&admin-password=supersecret")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        // ensure body contains our specific message
+        let bytes = to_bytes(resp.into_body()).await.unwrap();
+        let body = String::from_utf8_lossy(&bytes).to_string();
+        assert!(body.contains("403 - password algorithm not allowed"));
+        // ensure cache key still exists
+        assert!(CACHE.lock().unwrap().cache_get(&key).is_some());
     }
 }
