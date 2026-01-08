@@ -53,6 +53,32 @@ jobs:
               run: |
                   cargo binstall cargo-tarpaulin --force
 
+            - name: Install Windows prerequisites (Strawberry Perl, nasm, Perl modules)
+              if: matrix.os == 'windows-latest'
+              shell: powershell
+              run: |
+                  choco install strawberryperl -y
+                  choco install nasm -y
+                  refreshenv
+                  # Install Perl modules required by OpenSSL build (non-fatal on failure)
+                  cpan -i Locale::Maketext::Simple || true
+                  cpan -i Params::Check || true
+                  cpan -i IPC::Cmd || true
+                  cpan -i Text::Template || true
+
+            - name: Install musl toolchain for musl target
+              if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-musl'
+              shell: bash
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y musl-tools build-essential pkg-config ca-certificates curl git
+                  # Provide a wrapper expected by some build scripts
+                  sudo ln -sf "$(which musl-gcc)" /usr/bin/x86_64-linux-musl-gcc || true
+                  rustup target add x86_64-unknown-linux-musl || true
+                  # Set environment variables for cargo/OpenSSL builds
+                  echo "CC_x86_64_unknown_linux_musl=x86_64-linux-musl-gcc" >> $GITHUB_ENV
+                  echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
+
             - name: Cache cargo build artifacts (target)
               uses: actions/cache@v5
               with:
@@ -76,7 +102,7 @@ jobs:
               if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
               shell: bash
               run: |
-                  cargo tarpaulin --out Xml --target ${{ matrix.target }}
+                  cargo tarpaulin --out Xml --target ${{ matrix.target }} --all-features --no-fail-fast --output cobertura.xml
 
             - name: Upload code coverage report artifact (Linux x86_64-unknown-linux-gnu only)
               if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
