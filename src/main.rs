@@ -1207,6 +1207,9 @@ mod tests {
     use actix_web::test;
     use actix_web::{http::header::CONTENT_TYPE, http::StatusCode};
     use std::collections::HashSet;
+    // Ensure tests that start real actix servers run mutually exclusive to avoid
+    // port binding conflicts. Use the `serial_test` crate to serialize them.
+    use serial_test::serial;
 
     #[actix_web::test]
     async fn redirect_index_returns_redirect() {
@@ -1557,6 +1560,7 @@ mod tests {
         assert!(CACHE.lock().unwrap().cache_get(&key).is_some());
     }
 
+    #[serial]
     #[actix_web::test]
     async fn admin_flush_cache_real_life() {
         // Real-life style test against the real GitHub repo via the running server.
