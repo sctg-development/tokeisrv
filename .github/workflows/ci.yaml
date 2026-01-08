@@ -61,10 +61,14 @@ jobs:
                   choco install nasm -y
                   refreshenv
                   # Install Perl modules required by OpenSSL build (non-fatal on failure)
-                  cpan -i Locale::Maketext::Simple || true
-                  cpan -i Params::Check || true
-                  cpan -i IPC::Cmd || true
-                  cpan -i Text::Template || true
+                  cpan -i Locale::Maketext::Simple
+                  if ($LASTEXITCODE -ne 0) { Write-Host 'cpan Locale::Maketext::Simple failed (non-fatal)'; }
+                  cpan -i Params::Check
+                  if ($LASTEXITCODE -ne 0) { Write-Host 'cpan Params::Check failed (non-fatal)'; }
+                  cpan -i IPC::Cmd
+                  if ($LASTEXITCODE -ne 0) { Write-Host 'cpan IPC::Cmd failed (non-fatal)'; }
+                  cpan -i Text::Template
+                  if ($LASTEXITCODE -ne 0) { Write-Host 'cpan Text::Template failed (non-fatal)'; }
 
             - name: Install musl toolchain for musl target
               if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-musl'
