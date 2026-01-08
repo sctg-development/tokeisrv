@@ -22,4 +22,7 @@ env_logger = "0.11"
 rsbadges = "1.1"
 csscolorparser = "0.8"
 git2 = { version = "0.20", features = ["https"] }
-openssl = { version = "0.10", features = ["vendored"] }
+sha-crypt = { version = "0.6.0-rc.1" }
+
+[dev-dependencies]
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }

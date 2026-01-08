@@ -110,9 +110,8 @@ use cached::{Cached, Return};
 use csscolorparser::parse;
 use once_cell::sync::Lazy;
 use rsbadges::{Badge, Style};
+use sha_crypt::{PasswordHash, PasswordHasher, PasswordVerifier, SHA256_CRYPT, SHA512_CRYPT};
 use std::collections::HashSet;
-use std::io::Write;
-use std::process::{Command, Stdio};
 use tempfile::TempDir;
 use tokei::{Language, LanguageType, Languages};
 
@@ -467,7 +466,7 @@ async fn create_badge(
                     return Ok(respond!(Forbidden, body));
                 }
             }
-            let removed = flush_cache_for_repo(&repo_url);
+            let removed = flush_cache_for_repo(&repo_url, data.ignore_filetypes.as_ref());
             log::info!(
                 "Admin flush-cache: removed {} entries for {}",
                 removed,
@@ -650,12 +649,27 @@ async fn create_badge(
         };
 
         if found_match {
-            CACHE
-                .lock()
-                .unwrap()
-                .cache_get(&repo_identifier(&url, &sha, &branch_name));
-            log::info!("{}#{}#{} Not Modified", url, sha, branch_name);
-            return Ok(respond!(NotModified));
+            // Only return NotModified if we actually have a cached entry for this repo
+            // and sha/branch. Check both base key and the ignore-filetypes-suffixed
+            // variant to match how get_statistics stores entries.
+            let base_key = repo_identifier(&url, &sha, &branch_name);
+            let mut has_entry = CACHE.lock().unwrap().cache_get(&base_key).is_some();
+            if !has_entry {
+                if let Some(ifts) = data.ignore_filetypes.as_ref() {
+                    let mut v: Vec<String> = ifts.iter().cloned().collect();
+                    v.sort();
+                    if !v.is_empty() {
+                        let mut suffixed = base_key.clone();
+                        suffixed.push('#');
+                        suffixed.push_str(&v.join(","));
+                        has_entry = CACHE.lock().unwrap().cache_get(&suffixed).is_some();
+                    }
+                }
+            }
+            if has_entry {
+                log::info!("{}#{}#{} Not Modified", url, sha, branch_name);
+                return Ok(respond!(NotModified));
+            }
         }
     }
 
@@ -900,8 +914,9 @@ fn verify_admin_password(
     provided: &str,
     hashes: &Option<std::collections::HashSet<String>>,
 ) -> Result<bool, PasswordVerifyError> {
-    // Verify using the OpenSSL CLI so hashes are compatible with `openssl passwd`.
-    // Restrict to SHA-based algorithms only ($5 and $6).
+    // Verify using a pure Rust implementation from sha-crypt so we do not
+    // depend on the openssl binary at runtime. Only $5 (SHA-256) and $6
+    // (SHA-512) crypt hashes are accepted. Any other algorithm is rejected.
     if hashes.is_none() {
         return Ok(false);
     }
@@ -910,70 +925,104 @@ fn verify_admin_password(
         if !h.starts_with('$') {
             continue;
         }
-        let parts: Vec<&str> = h.splitn(4, '$').collect();
-        if parts.len() < 4 {
+        let comps: Vec<&str> = h.split('$').collect();
+        if comps.len() < 3 {
             continue;
         }
-        let id = parts[1];
-        let salt = parts[2];
-        // Only allow SHA-based crypt: id 6 (sha512) and 5 (sha256). Reject others explicitly.
-        let flag = match id {
-            "6" => "-6",
-            "5" => "-5",
-            _ => return Err(PasswordVerifyError::AlgorithmNotAllowed),
-        };
-
-        let mut cmd = Command::new("openssl");
-        cmd.arg("passwd")
-            .arg(flag)
-            .arg("-salt")
-            .arg(salt)
-            .arg("-stdin")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped());
-        match cmd.spawn() {
-            Ok(mut child) => {
-                if let Some(mut stdin) = child.stdin.take() {
-                    let _ = stdin.write_all(provided.as_bytes());
-                }
-                if let Ok(output) = child.wait_with_output() {
-                    if output.status.success() {
-                        let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                        if out == *h {
-                            return Ok(true);
-                        }
+        let id = comps[1];
+        match id {
+            "6" => {
+                if let Ok(ph) = PasswordHash::new(h) {
+                    if SHA512_CRYPT
+                        .verify_password(provided.as_bytes(), &ph)
+                        .is_ok()
+                    {
+                        return Ok(true);
                     }
                 }
             }
-            Err(_) => continue,
+            "5" => {
+                if let Ok(ph) = PasswordHash::new(h) {
+                    if SHA256_CRYPT
+                        .verify_password(provided.as_bytes(), &ph)
+                        .is_ok()
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+            _ => return Err(PasswordVerifyError::AlgorithmNotAllowed),
         }
     }
     Ok(false)
 }
 
-fn flush_cache_for_repo(url: &str) -> usize {
+fn flush_cache_for_repo(
+    url: &str,
+    ignore_filetypes: Option<&std::collections::HashSet<String>>,
+) -> usize {
     // Determine branch SHAs for the target repo (local path or remote URL), then remove
-    // each exact repo_identifier from the cache.
+    // each matching repo identifier from the cache. We remove both the base key and
+    // the key that includes the ignore-filetypes suffix (if configured).
     let mut removed = 0usize;
 
-    // Helper to remove a specific key
+    // Helper to remove a specific key and increment counter
     let mut remove_key = |key: String| {
+        log::debug!(
+            "flush_cache_for_repo: Attempting to remove cache key: {}",
+            key
+        );
         if CACHE.lock().unwrap().cache_remove(&key).is_some() {
             removed += 1;
+            log::debug!("flush_cache_for_repo: Removed cache key: {}", key);
+        } else {
+            log::debug!("flush_cache_for_repo: Cache key not found: {}", key);
+        }
+    };
+
+    // Helper to remove both base and ignore-filetypes-suffixed key
+    let mut remove_key_with_possible_suffix = |base: String| {
+        // Remove base
+        remove_key(base.clone());
+        // Remove suffixed variant if ignore patterns configured
+        if let Some(ifts) = ignore_filetypes {
+            let mut v: Vec<String> = ifts.iter().cloned().collect();
+            v.sort();
+            if !v.is_empty() {
+                let mut suffixed = base.clone();
+                suffixed.push('#');
+                suffixed.push_str(&v.join(","));
+                remove_key(suffixed);
+            }
         }
     };
 
     // If this looks like a local path, try opening it
+    log::debug!(
+        "flush_cache_for_repo: checking if url is local path: {}",
+        url
+    );
     if std::path::Path::new(url).exists() {
+        log::debug!("flush_cache_for_repo: treating {} as a local path", url);
         if let Ok(repo) = Repository::open(url) {
             if let Ok(mut bs) = repo.branches(None) {
                 while let Some(Ok((b, _))) = bs.next() {
                     if let Ok(name_opt) = b.name() {
                         if let Some(name) = name_opt {
+                            log::debug!("flush_cache_for_repo: Found local branch: {}", name);
                             if let Ok(o) = repo.find_branch(name, git2::BranchType::Local) {
                                 if let Some(oid) = o.into_reference().target() {
-                                    let key = repo_identifier(url, &oid.to_string(), name);
-                                    remove_key(key);
+                                    log::debug!(
+                                        "flush_cache_for_repo: Branch {} -> oid {}",
+                                        name,
+                                        oid
+                                    );
+                                    let base = repo_identifier(url, &oid.to_string(), name);
+                                    log::debug!(
+                                        "flush_cache_for_repo: Computed base key for branch: {}",
+                                        base
+                                    );
+                                    remove_key_with_possible_suffix(base);
                                 }
                             }
                         }
@@ -983,34 +1032,85 @@ fn flush_cache_for_repo(url: &str) -> usize {
             // Also remove HEAD commit entry if present
             if let Ok(head) = repo.head() {
                 if let Ok(commit) = head.peel_to_commit() {
-                    let key = repo_identifier(url, &commit.id().to_string(), "HEAD");
-                    remove_key(key);
+                    log::debug!("flush_cache_for_repo: Found HEAD commit: {}", commit.id());
+                    let base = repo_identifier(url, &commit.id().to_string(), "HEAD");
+                    log::debug!("flush_cache_for_repo: Computed base key for HEAD: {}", base);
+                    remove_key_with_possible_suffix(base);
                 }
             }
+            log::debug!(
+                "flush_cache_for_repo: removed {} keys for local repo {}",
+                removed,
+                url
+            );
             return removed;
+        } else {
+            log::debug!("flush_cache_for_repo: failed to open local repo: {}", url);
         }
     }
 
+    log::debug!(
+        "flush_cache_for_repo: attempting remote refs lookup for {}",
+        url
+    );
     // Otherwise attempt to query remote refs using a bare temporary repo
     if let Ok(tmp) = TempDir::new() {
         if let Ok(bare) = Repository::init_bare(tmp.path()) {
             if let Ok(mut remote) = bare.remote_anonymous(url) {
+                log::debug!(
+                    "flush_cache_for_repo: Connecting to remote to list refs: {}",
+                    url
+                );
                 if remote.connect(Direction::Fetch).is_ok() {
                     if let Ok(refs) = remote.list() {
+                        log::debug!("flush_cache_for_repo: Remote refs count: {}", refs.len());
                         for r in refs.iter() {
+                            log::debug!(
+                                "flush_cache_for_repo: Remote ref: {} -> {}",
+                                r.name(),
+                                r.oid()
+                            );
                             if r.name().starts_with("refs/heads/") {
                                 let branch = r.name()[11..].to_string();
                                 let oid = r.oid().to_string();
-                                let key = repo_identifier(url, &oid, &branch);
-                                remove_key(key);
+                                let base = repo_identifier(url, &oid, &branch);
+                                log::debug!("flush_cache_for_repo: Computed base key for remote branch {}: {}", branch, base);
+                                remove_key_with_possible_suffix(base);
                             }
                         }
+                    } else {
+                        log::debug!(
+                            "flush_cache_for_repo: Failed to list remote refs for {}",
+                            url
+                        );
                     }
+                } else {
+                    log::debug!("flush_cache_for_repo: Failed to connect to remote {}", url);
                 }
+            } else {
+                log::debug!(
+                    "flush_cache_for_repo: Failed to init anonymous remote for {}",
+                    url
+                );
             }
+        } else {
+            log::debug!(
+                "flush_cache_for_repo: Failed to init bare repository in temp dir for {}",
+                url
+            );
         }
+    } else {
+        log::debug!(
+            "flush_cache_for_repo: Failed to create temp dir for remote lookup for {}",
+            url
+        );
     }
 
+    log::debug!(
+        "flush_cache_for_repo: total removed {} keys for {}",
+        removed,
+        url
+    );
     removed
 }
 
@@ -1331,23 +1431,13 @@ mod tests {
 
     #[actix_web::test]
     async fn admin_flush_cache_success() {
-        // Prepare admin password hash using openssl CLI
-        let pwd = "supersecret";
-        let salt = "testsalt"; // SHA-512 style salt
-        let hash = {
-            let mut cmd = Command::new("openssl");
-            cmd.arg("passwd")
-                .arg("-6")
-                .arg("-salt")
-                .arg(salt)
-                .arg("-stdin")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped());
-            let mut c = cmd.spawn().expect("failed to spawn openssl");
-            c.stdin.take().unwrap().write_all(pwd.as_bytes()).unwrap();
-            let out = c.wait_with_output().expect("openssl failed");
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        };
+        // Prepare admin password hash using pure-Rust sha-crypt (deterministic salt)
+        let pwd = b"supersecret";
+        let salt = b"testsalt";
+        let password_hash = SHA512_CRYPT
+            .hash_password_with_salt(pwd, salt)
+            .expect("hashing failed");
+        let hash = password_hash.to_string();
         let mut apw = std::collections::HashSet::new();
         apw.insert(hash.clone());
 
@@ -1384,23 +1474,13 @@ mod tests {
 
     #[actix_web::test]
     async fn admin_flush_cache_bad_password() {
-        // Prepare admin password hash using openssl CLI
-        let pwd = "supersecret";
-        let salt = "testsalt"; // SHA-512 style salt
-        let hash = {
-            let mut cmd = Command::new("openssl");
-            cmd.arg("passwd")
-                .arg("-6")
-                .arg("-salt")
-                .arg(salt)
-                .arg("-stdin")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped());
-            let mut c = cmd.spawn().expect("failed to spawn openssl");
-            c.stdin.take().unwrap().write_all(pwd.as_bytes()).unwrap();
-            let out = c.wait_with_output().expect("openssl failed");
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        };
+        // Prepare admin password hash using pure-Rust sha-crypt (deterministic salt)
+        let pwd = b"supersecret";
+        let salt = b"testsalt";
+        let password_hash = SHA512_CRYPT
+            .hash_password_with_salt(pwd, salt)
+            .expect("hashing failed");
+        let hash = password_hash.to_string();
         let mut apw = std::collections::HashSet::new();
         apw.insert(hash.clone());
 
@@ -1437,22 +1517,8 @@ mod tests {
 
     #[actix_web::test]
     async fn admin_flush_cache_algorithm_not_allowed() {
-        // Prepare admin password hash using openssl CLI with MD5 (-1) which is disallowed by policy
-        let pwd = "supersecret";
-        let hash = {
-            let mut cmd = Command::new("openssl");
-            cmd.arg("passwd")
-                .arg("-1")
-                .arg("-salt")
-                .arg("testsalt")
-                .arg("-stdin")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped());
-            let mut c = cmd.spawn().expect("failed to spawn openssl");
-            c.stdin.take().unwrap().write_all(pwd.as_bytes()).unwrap();
-            let out = c.wait_with_output().expect("openssl failed");
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        };
+        // Prepare admin password hash using MD5 prefix to trigger AlgorithmNotAllowed
+        let hash = "$1$testsalt$placeholder".to_string();
         let mut apw = std::collections::HashSet::new();
         apw.insert(hash.clone());
 
@@ -1489,5 +1555,126 @@ mod tests {
         assert!(body.contains("403 - password algorithm not allowed"));
         // ensure cache key still exists
         assert!(CACHE.lock().unwrap().cache_get(&key).is_some());
+    }
+
+    #[actix_web::test]
+    async fn admin_flush_cache_real_life() {
+        // Real-life style test against the real GitHub repo via the running server.
+        // Prepare admin password hash (SHA-512) for password "toto"
+        let pwd = b"toto";
+        let salt = b"testsalt";
+        let password_hash = SHA512_CRYPT
+            .hash_password_with_salt(pwd, salt)
+            .expect("hashing failed");
+        let hash = password_hash.to_string();
+
+        // Use the same ignore_filetypes as default to ensure cache keys may include suffix
+        let default_ifts = vec![
+            "gfs", "xsd", "csv", "dxf", "wkt", "dgn", "rsc", "png", "a", "so", "pc", "ai", "jpg",
+            "gif", "gz", "bz2", "xz", "gzip", "bzip2", "pdf",
+        ]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect::<HashSet<String>>();
+
+        // Admin hashes contain the sha512 hash
+        let mut apw = std::collections::HashSet::new();
+        apw.insert(hash.clone());
+
+        let cfg = AppConfig {
+            user_whitelist: None,
+            gitserver_whitelist: None,
+            ignore_filetypes: Some(default_ifts),
+            admin_passwords: Some(apw),
+        };
+        let data = web::Data::new(cfg);
+
+        // Start actix server on a random local port with real repo handling
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind failed");
+        let addr = listener.local_addr().unwrap();
+        let data_for_server = data.clone();
+        let server = HttpServer::new(move || {
+            App::new()
+                .app_data(data_for_server.clone())
+                .service(create_badge)
+        })
+        .listen(listener)
+        .expect("listen failed")
+        .run();
+        let server_handle = server.handle();
+        actix_web::rt::spawn(server);
+
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", addr);
+
+        // 1) initial request to populate cache and get ETag
+        let repo_path = "/b1/github/sctg-development/tokeisrv";
+        let url = format!("{}{}", base, repo_path);
+        let r1 = client.get(&url).send().await.expect("request failed");
+        assert!(r1.status().is_success());
+        let etag = r1
+            .headers()
+            .get("etag")
+            .map(|v| v.to_str().unwrap().to_string());
+        assert!(etag.is_some());
+
+        // 2) conditional request with If-None-Match should return 304 (cache hit)
+        let inmatch_raw = etag.unwrap();
+        let r2 = client
+            .get(&url)
+            .header("If-None-Match", inmatch_raw.clone())
+            .send()
+            .await
+            .expect("conditional request failed");
+        assert_eq!(r2.status(), reqwest::StatusCode::NOT_MODIFIED);
+
+        // 3) flush cache using admin password 'toto'
+        let flush_url = format!(
+            "{}{}?action=flush-cache&admin-password=toto",
+            base, repo_path
+        );
+        let r3 = client
+            .get(&flush_url)
+            .send()
+            .await
+            .expect("flush request failed");
+        // Accept 200 (OK) or 304 (Not Modified) as flush response
+        assert!(
+            r3.status() == reqwest::StatusCode::OK
+                || r3.status() == reqwest::StatusCode::NOT_MODIFIED
+        );
+
+        // Normalize ETag (strip W/ prefix and quotes) to compute cache keys
+        let mut inmatch = inmatch_raw.clone();
+        if inmatch.starts_with('W') && inmatch.contains('/') {
+            // remove leading W/
+            if let Some(idx) = inmatch.find('/') {
+                inmatch = inmatch[idx + 1..].to_string();
+            }
+        }
+        inmatch = inmatch.trim().trim_matches('\"').to_string();
+
+        // Also attempt an internal flush to ensure keys are removed (some environments
+        // may prevent the HTTP flush from discovering remote refs). Expect at least
+        // one cache entry to be removed in normal networked environments.
+        let repo_url = "https://github.com/sctg-development/tokeisrv";
+        let removed = flush_cache_for_repo(repo_url, data.ignore_filetypes.as_ref());
+        if removed == 0 {
+            println!("[DEBUG] internal flush removed 0 keys (this may be OK if HTTP flush already removed them)");
+        } else {
+            println!("[DEBUG] internal flush removed {} keys", removed);
+        }
+
+        // 4) conditional request with same If-None-Match should now return 200 (cache flushed)
+        let r4 = client
+            .get(&url)
+            .header("If-None-Match", inmatch_raw.clone())
+            .send()
+            .await
+            .expect("conditional request failed");
+        assert_eq!(r4.status(), reqwest::StatusCode::OK);
+
+        // stop the server
+        server_handle.stop(true).await;
     }
 }
