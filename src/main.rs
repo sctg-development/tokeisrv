@@ -1432,6 +1432,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
+    #[serial]
     #[actix_web::test]
     async fn admin_flush_cache_success() {
         // Prepare admin password hash using pure-Rust sha-crypt (deterministic salt)
@@ -1475,6 +1476,7 @@ mod tests {
         assert!(CACHE.lock().unwrap().cache_get(&key).is_none());
     }
 
+    #[serial]
     #[actix_web::test]
     async fn admin_flush_cache_bad_password() {
         // Prepare admin password hash using pure-Rust sha-crypt (deterministic salt)
@@ -1518,6 +1520,7 @@ mod tests {
         assert!(CACHE.lock().unwrap().cache_get(&key).is_some());
     }
 
+    #[serial]
     #[actix_web::test]
     async fn admin_flush_cache_algorithm_not_allowed() {
         // Prepare admin password hash using MD5 prefix to trigger AlgorithmNotAllowed
