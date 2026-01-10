@@ -20,7 +20,7 @@ gitServerWhitelist: ""
 # Optional admin password hashes (comma-separated). Each value should be the hashed output of
 # `openssl passwd -5` or `openssl passwd -6` (SHA-256 or SHA-512 crypt). Only $5/$6 are accepted.
 # Example: "$6$testsalt$...,$6$othersalt$..."
-adminPassword: ""
+adminPassword: "$6$iacL6TNrQ/7MXfLW$8Ong95PW0P3U3ArzFWC7N0jMHbBCtgl6DAr2hvkUWxhFMrX3/cNEGqeThIaRc1NwJFaVF/kCRRLpKjiiQIN2F1" # Default password is "password" hashed with SHA-512 crypt
 
 cacheTtl: 86400 # Cache TTL in seconds (default: 1 day)
 cacheSize: 1000 # Cache size (default: 1000 entries)
@@ -96,8 +96,14 @@ cloudflared:
   # For testing, you can override the command/args to keep the container running
   # command: ["/usr/bin/sleep"]
   # args: ["infinity"]
-  TunnelID: ""
-  credentials: ""
+  TunnelID: "12345678-90ab-cdef-1234-567890abcdef"
+  credentials:
+    {
+      "AccountTag": "1234567890abcdef1234567890abcdef",
+      "TunnelSecret": "abcdefghijklmnopqrstuvwxyz0123456789abcdef",
+      "TunnelID": "12345678-90ab-cdef-1234-567890abcdef",
+      "Endpoint": "",
+    }
   config: |-
     # Example ingress configuration adjusted by tokeisrv chart
     tunnel: tokeisrv-tunnel
