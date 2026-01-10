@@ -113,13 +113,13 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: code-coverage-${{ matrix.target }}
-          path: coverage.xml
+          path: cobertura.xml
 
       - name: Upload coverage to Codecov (Linux x86_64-unknown-linux-gnu only)
         if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
         uses: codecov/codecov-action@v5
         with:
-          files: coverage.xml
+          files: cobertura.xml
           flags: tarpaulin
           slug: sctg-development/tokeisrv
           token: ${{ secrets.CODECOV_TOKEN }}
