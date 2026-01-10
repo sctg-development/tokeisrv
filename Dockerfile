@@ -19,6 +19,9 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
+
+#Build this multiplatform Docker image with:
+# docker buildx build --platform linux/amd64,linux/arm64 -t sctg/tokeisrv:latest --push .
 FROM sctg/rust-photoacoustic-static-deps:latest AS deps
 
 FROM alpine:3.23 AS builder
@@ -26,6 +29,7 @@ FROM alpine:3.23 AS builder
 COPY --from=deps /usr/local/lib/*.a /usr/local/lib/
 COPY --from=deps /usr/local/include /usr/local/include
 COPY --from=deps /usr/local/lib/pkgconfig    /usr/local/lib/pkgconfig
+RUN echo "Building tokeisrv for target architecture: $(apk --print-arch)"
 RUN apk update && apk add \
     clang g++ git patch cmake build-base \
     curl curl-dev curl-static\
@@ -34,13 +38,12 @@ RUN apk update && apk add \
     linux-headers expat-dev expat-static
 # RUN apk add --no-cache build-base curl git pkgconfig openssl-dev libc-dev libstdc++ musl-dev musl-tools cmake clang g++
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y 
-RUN echo $(dpkg --print-architecture)
 RUN mkdir /build
 RUN if [ "$(apk --print-arch)" = "armhf" ]; then \
     . /root/.cargo/env && rustup target add armv7-unknown-linux-musleabihf; \
     echo "armv7-unknown-linux-musleabihf" > /build/_target ; \
     fi
-RUN if [ "$(apk --print-arch)" = "arm64" ]; then \
+RUN if [ "$(apk --print-arch)" = "aarch64" ]; then \
     . /root/.cargo/env && rustup target add aarch64-unknown-linux-musl; \
     echo "aarch64-unknown-linux-musl" > /build/_target ; \
     fi
