@@ -70,7 +70,7 @@ RUN cd /build && \
     cp target/$TARGET/release/tokei_rs /tokeisrv
 
 FROM alpine:3.23 AS runtime 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates bash
 COPY --from=builder /tokeisrv /usr/local/bin/tokeisrv
 COPY docker-startup.sh /usr/local/bin/docker-startup.sh
 RUN chmod +x /usr/local/bin/docker-startup.sh
