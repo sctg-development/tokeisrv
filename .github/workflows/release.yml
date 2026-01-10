@@ -166,6 +166,10 @@ jobs:
           echo "Building target: ${{ matrix.target }}"
           # Use target-specific build command
           if [[ "${{ matrix.target }}" == "x86_64-unknown-linux-musl" ]]; then
+            # Link openssl pkg-config to standard locations
+            ln -sf /usr/lib/x86_64-linux-gnu/pkgconfig/openssl.pc /usr/lib/pkgconfig/openssl.pc
+            ln -sf /usr/lib/x86_64-linux-gnu/pkgconfig/libssl.pc /usr/lib/pkgconfig/libssl.pc
+            ln -sf /usr/lib/x86_64-linux-gnu/pkgconfig/libcrypto.pc /usr/lib/pkgconfig/libcrypto.pc
             export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
             cargo build --release --target ${{ matrix.target }}
           elif [[ "${{ matrix.target }}" == "x86_64-pc-windows-msvc" ]]; then

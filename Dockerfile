@@ -19,28 +19,32 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
+FROM sctg/rust-photoacoustic-static-deps:latest AS deps
 
-FROM ubuntu:resolute AS builder
-RUN apt-get update && apt-get install -y build-essential curl git pkg-config libssl-dev libc-dev libstdc++-15-dev libgcc-15-dev \
-    zip git libcurl4-openssl-dev musl-dev musl-tools cmake libclang-dev g++
+FROM alpine:3.23 AS builder
+# Copy static dependencies from the deps image
+COPY --from=deps /usr/local/lib/*.a /usr/local/lib/
+COPY --from=deps /usr/local/include /usr/local/include
+COPY --from=deps /usr/local/lib/pkgconfig    /usr/local/lib/pkgconfig
+RUN apk update && apk add \
+    clang g++ git patch cmake build-base \
+    curl curl-dev curl-static\
+    pkgconfig \
+    musl-dev autoconf automake libtool \
+    linux-headers expat-dev expat-static
+# RUN apk add --no-cache build-base curl git pkgconfig openssl-dev libc-dev libstdc++ musl-dev musl-tools cmake clang g++
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y 
 RUN echo $(dpkg --print-architecture)
 RUN mkdir /build
-RUN if [ "$(dpkg --print-architecture)" = "armhf" ]; then \
+RUN if [ "$(apk --print-arch)" = "armhf" ]; then \
     . /root/.cargo/env && rustup target add armv7-unknown-linux-musleabihf; \
-    ln -svf /usr/bin/ar /usr/bin/arm-linux-musleabihf-ar; \
-    ln -svf /usr/bin/strip /usr/bin/arm-linux-musleabihf-strip; \
-    ln -svf /usr/bin/ranlib /usr/bin/arm-linux-musleabihf-ranlib; \
     echo "armv7-unknown-linux-musleabihf" > /build/_target ; \
     fi
-RUN if [ "$(dpkg --print-architecture)" = "arm64" ]; then \
+RUN if [ "$(apk --print-arch)" = "arm64" ]; then \
     . /root/.cargo/env && rustup target add aarch64-unknown-linux-musl; \
-    ln -svf /usr/bin/ar /usr/bin/aarch64-linux-musl-ar; \
-    ln -svf /usr/bin/strip /usr/bin/aarch64-linux-musl-strip; \
-    ln -svf /usr/bin/ranlib /usr/bin/aarch64-linux-musl-ranlib; \
     echo "aarch64-unknown-linux-musl" > /build/_target ; \
     fi
-RUN if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
+RUN if [ "$(apk --print-arch)" = "x86_64" ]; then \
     . /root/.cargo/env && rustup target add x86_64-unknown-linux-musl; \
     echo "x86_64-unknown-linux-musl" > /build/_target ; \
     fi
@@ -50,13 +54,20 @@ COPY src /build/src
 WORKDIR /build
 RUN cd /build && . /root/.cargo/env && \
     TARGET=$(cat _target) && \
-    cargo build --release --target $TARGET
+    export RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-static" && \
+    cargo build --release --target $TARGET && \
+    strip target/$TARGET/release/tokei_rs
+RUN cd /build && \
+    TARGET=$(cat _target) && \
+    ls -l target/$TARGET/release/ && \
+    ldd target/$TARGET/release/tokeisrv ||  true && \
+    echo "Build completed for target: $TARGET"
 RUN cd /build && \
     TARGET=$(cat _target) && \
     cp target/$TARGET/release/tokei_rs /tokeisrv
 
-FROM ubuntu:resolute AS runtime 
-RUN apt-get update && apt-get install -y ca-certificates
+FROM alpine:3.23 AS runtime 
+RUN apk add --no-cache ca-certificates
 COPY --from=builder /tokeisrv /usr/local/bin/tokeisrv
 COPY docker-startup.sh /usr/local/bin/docker-startup.sh
 RUN chmod +x /usr/local/bin/docker-startup.sh
