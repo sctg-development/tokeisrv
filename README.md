@@ -1,6 +1,7 @@
 ![](https://tokeisrv.sctg.eu.org/b1/github/sctg-development/tokeisrv?type=rust&category=code)
 ![](https://tokeisrv.sctg.eu.org/b1/github/sctg-development/tokeisrv?type=rust&category=comments)
 [![codecov](https://codecov.io/github/sctg-development/tokeisrv/branch/main/graph/badge.svg)](https://codecov.io/github/sctg-development/tokeisrv)
+[![CI](https://github.com/sctg-development/tokeisrv/actions/workflows/ci.yaml/badge.svg)](https://github.com/sctg-development/tokeisrv/actions/workflows/ci.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 # tokeisrv — Tokei HTTP Badge Service
 
